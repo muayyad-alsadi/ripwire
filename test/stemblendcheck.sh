@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# stemblendcheck — light stem blended into BM25 before saturation.
+# stemblendcheck — guarded stem scoring (src/stemguard.h). The header below describes the retired blend; the arms now assert the guard.
 #
 # tf' = tf_exact + 0.35 * tf_stem_only / max(tf_stem_only), one idf over documents that contain either form.
 # A stem is admitted only while its stem-only document frequency is <= max(8, S/64).
 # Dividing by the max keeps the strongest stem hit at 0.35, under one exact token.
 #
 # The two rounds that left RIPWIRE_QSTEM off (docs/EVALS.md §7) are the controls here:
-#   (cap)  a common stem ("split", the .split() displacement) contributes nothing, and a
+#   (cap)  a common stem ("split", the .split() displacement) scores above zero but below the exact "splits"; a
 #          section that actually says "splits" still ranks. The rejected stem does not enter df.
 #   (rare) an admitted stem ranks, and the exact surface outranks it at the same count.
 #          The full-weight fold let a rare variant ("compressed" -> "compress") displace a
@@ -146,10 +146,9 @@ NOISE="$( score_of "$TMP/cap.xml" "noise 01" )"
 python3 - "$REAL" "$NOISE" <<'PY'
 import sys
 real, noise = sys.argv[1], sys.argv[2]
-noise_out = noise in ("", "0", "0.0")
-sys.exit(0 if real and float(real) > 0 and noise_out else 1)
+sys.exit(0 if real and noise and float(real) > float(noise) > 0 else 1)
 PY
-[ $? -eq 0 ] && ok "(cap) common stem 'split' is dropped; 'real splits' still ranks" \
+[ $? -eq 0 ] && ok "(cap) common stem 'split' stays below the exact 'real splits'" \
     || no "(cap) real=${REAL:-absent} noise01=${NOISE:-absent}"
 
 # ── one exact token beats a pile of the same stem, and beats two stem terms ─────────────────────

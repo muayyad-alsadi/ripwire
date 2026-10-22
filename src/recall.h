@@ -1007,7 +1007,6 @@ inline std::vector<float> recallOwnProseEvidence( const IngestResult& ing, const
     std::vector<int> tf( unitCount * termCount, 0 );
     std::vector<int> tfStemAll( unitCount * termCount, 0 );
     std::vector<int> dl( unitCount, 0 );
-    std::vector<int> df( termCount, 0 );
     for( std::size_t u = 0; u < unitCount; ++u )
     {
         const Symbol& s = ing.symbols[ headingSyms[u] ];
@@ -1024,39 +1023,37 @@ inline std::vector<float> recallOwnProseEvidence( const IngestResult& ing, const
             accumulateRecallTermFreqs( raw.substr( headingEnd, ownEnds[u] - headingEnd ), kwProse, uniqueToks, tfRow, stemRow, dl[u] );
         }
     }
-    std::vector<double> tfPrime;
-    stemBlendedTermFreq( unitCount, termCount, tf.data(), tfStemAll.data(), tfPrime );
-    for( std::size_t u = 0; u < unitCount; ++u )
-    {
-        for( std::size_t t = 0; t < termCount; ++t )
-        {
-            df[t] += tfPrime[ u * termCount + t ] > 0.0 ? 1 : 0;
-        }
-    }
-
     const Bm25Params bm25Params = resolveBm25Params();   // A4: the ONE definition, shared with the scorer
     double           totalDl    = 0.0;
     for( const int unitDl : dl )
     {
         totalDl += unitDl;
     }
-    const double avgdl = totalDl > 0.0 ? totalDl / double( unitCount ) : 1.0;
+    const double         avgdl = totalDl > 0.0 ? totalDl / double( unitCount ) : 1.0;
+    const StemGuardTable guard = buildStemGuard( unitCount, termCount, tf.data(), tfStemAll.data(), dl.data(), avgdl, bm25Params.k1, bm25Params.b );
+    double               peakBound = 0.0;   // every query occurrence adds its term's cap
+    for( const std::string& q : queryToks )
+    {
+        peakBound += guard.cap[ std::size_t( std::find( uniqueToks.begin(), uniqueToks.end(), q ) - uniqueToks.begin() ) ];
+    }
     for( std::size_t u = 0; u < unitCount; ++u )
     {
-        double sum = 0.0;
+        double sum        = 0.0;
+        int    exactWords = 0;
         for( const std::string& q : queryToks )   // occurrence order: BM25 adds one contribution per occurrence
         {
             const std::size_t t = std::size_t( std::find( uniqueToks.begin(), uniqueToks.end(), q ) - uniqueToks.begin() );
-            const double termFreq = tfPrime[ u * termCount + t ];
-            if( termFreq <= 0.0 )
+            if( !stemGuardMatches( guard, tf.data(), u, t ) )
             {
                 continue;
             }
-            const double idf = std::log( ( double( unitCount ) - df[t] + 0.5 ) / ( df[t] + 0.5 ) + 1.0 );
-            sum += idf * ( termFreq * ( bm25Params.k1 + 1.0 ) )
-                   / ( termFreq + bm25Params.k1 * ( 1.0 - bm25Params.b + bm25Params.b * dl[u] / avgdl ) );
+            sum += stemGuardWord( guard, tf.data(), dl.data(), avgdl, bm25Params.k1, bm25Params.b, u, t );
         }
-        evidence[u] = float( sum );
+        for( std::size_t t = 0; t < termCount; ++t )
+        {
+            exactWords += tf[ u * termCount + t ] > 0 ? 1 : 0;
+        }
+        evidence[u] = float( stemGuardTier( peakBound, exactWords, sum ) );
     }
     return evidence;
 }

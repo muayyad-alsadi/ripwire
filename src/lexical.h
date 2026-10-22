@@ -20,6 +20,7 @@
 #include "infra/strkern.h"      // Byteset256 — the head set below is that type, not a second bitmap
 #include "infra/sortutil.h"      // deterministic sanitizer-clean score sorting for adaptive cuts
 #include "infra/namesplit.h"     // hasIdentifierShape — the ONE camel/snake predicate chooseForRanker shares with mention.h
+#include "stemguard.h"          // the guarded stem score: a stem-only match never outscores an exact one
 #include "infra/charconvcompat.h" // rw::parseFloating — envKnob's full-token finite parse of a RIPWIRE_* knob
 
 #include <algorithm>
@@ -99,6 +100,7 @@ struct LexTermEvidence
     std::vector<std::uint64_t> anyMask;    // symbolCount × maskWords
     std::size_t                maskWords   = 0;
     std::size_t                symbolCount = 0;
+    double                     bm25Max     = 0.0;   // the largest summed word score before the exact-word tier, tier multiplier divided out
 
     // input blow-up disclosure (dedupeQueryTerms / kMaxUniqueQueryTerms): terms.size() is the KEPT unique
     // term count; termsSeenTotal is every distinct term the query actually contained. Equal unless the
@@ -143,7 +145,7 @@ inline constexpr float kWeakLexicalScoreThreshold = 1.0f;
 // k1 (term-frequency saturation) and b (length normalization) used to be declared TWICE — once in
 // lexicalScoresTiered, once in lexicalScoresNameExactTiered — as separate `constexpr double k1 = 1.5, b =
 // 0.75;` lines that had to be kept in sync by hand. The early-termination bound in lexicalScoresTiered's
-// pruned branch (bm25ImpactBound below) derived its cap from ITS OWN local copy, which is the trap: change
+// pruned branch (the cap in stemguard.h) derived its cap from ITS OWN local copy, which is the trap: change
 // k1 or b at one site without also updating the bound and MaxScore pruning starts discarding candidates
 // whose true score exceeds the now-stale cap — no crash, no error, just a quietly worse top-K. Both
 // scoring sites and the bound now read the SAME resolved (k1,b), so they cannot drift apart again.
@@ -163,58 +165,16 @@ struct Bm25Params
 
 inline constexpr Bm25Params kBm25Default{ 1.5, 0.75 };
 
-// Stem-only term frequency is added before saturation, at this weight, after it is divided by the
-// largest stem-only count of that term. The strongest stem hit then adds 0.35, which is below one
-// exact token. Exact occurrences are not added again.
-inline constexpr double kLexStemAlpha = 0.35;
+// Stem matches are scored by the guard in stemguard.h. A stem-only match is worth at most kLexStemTheta (0.5) of the
+// weakest exact match of the same word, and the query adds a tier per word held as typed, so a stem never outscores
+// an exact match. There is no stem document-frequency cap: the guard protects exact matches by itself.
 
-// tf' = tf_exact + kLexStemAlpha * tf_stem_only / max(tf_stem_only). A stem whose stem-only document
-// frequency is above max(8, docCount/64) contributes nothing, so a later df over tf' > 0 is the union
-// of the exact hit and the admitted stem hit.
-inline void stemBlendedTermFreq( std::size_t docCount, std::size_t termCount, const int* tfExact, const int* tfStemAll,
-                                 std::vector<double>& tfPrime )
+// Which symbols the scorer returns. The caller chooses; every existing caller keeps Any.
+enum class LexMatch : std::uint8_t
 {
-    tfPrime.assign( docCount * termCount, 0.0 );
-    std::vector<int> stemOnly( docCount * termCount, 0 );
-    std::vector<int> dfStemOnly( termCount, 0 );
-    std::vector<int> stemMax( termCount, 0 );
-    for( std::size_t i = 0; i < docCount; ++i )
-    {
-        for( std::size_t t = 0; t < termCount; ++t )
-        {
-            const std::size_t at = i * termCount + t;
-            int               only = tfStemAll[ at ] - tfExact[ at ];
-            if( only < 0 )
-            {
-                only = 0;
-            }
-            stemOnly[ at ] = only;
-            if( only > 0 )
-            {
-                ++dfStemOnly[ t ];
-                if( only > stemMax[ t ] )
-                {
-                    stemMax[ t ] = only;
-                }
-            }
-        }
-    }
-    const std::uint32_t stemCap = std::max( std::uint32_t( 8 ), std::uint32_t( docCount / 64 ) );
-    for( std::size_t t = 0; t < termCount; ++t )
-    {
-        const bool admitted = dfStemOnly[ t ] > 0 && std::uint32_t( dfStemOnly[ t ] ) <= stemCap && stemMax[ t ] > 0;
-        for( std::size_t i = 0; i < docCount; ++i )
-        {
-            const std::size_t at = i * termCount + t;
-            double            tf = double( tfExact[ at ] );
-            if( admitted )
-            {
-                tf += kLexStemAlpha * double( stemOnly[ at ] ) / double( stemMax[ t ] );
-            }
-            tfPrime[ at ] = tf;
-        }
-    }
-}
+    Any,   // a symbol holding any kept query word, as typed or as a stem
+    All,   // only symbols holding every kept query word, as typed or as a stem
+};
 
 // A RIPWIRE_* calibration knob. Unset, or set empty, is the caller's default. A set value must parse IN FULL as a
 // finite number, or it is refused back to that default with one stderr line naming it, so a sweep cannot run on the
@@ -266,15 +226,6 @@ inline Bm25Params resolveBm25Params() noexcept
         p.b = std::clamp( *b, 0.0, 1.0 );
     }
     return p;
-}
-
-// The provably-safe per-term impact bound (MaxScore "max contribution"), derived from the SAME (k1,b) the
-// exact scoring loop uses. idf: this term's IDF. T: the largest weighted tf of this term anywhere in the
-// corpus (tfMaxOf[u] at the call site). See lexicalScoresTiered's pruned branch for the full monotonicity
-// proof this bound relies on — it holds for ANY k1 > 0 and ANY b in [0,1], not just the shipped defaults.
-inline double bm25ImpactBound( double idf, double T, const Bm25Params& p ) noexcept
-{
-    return idf * ( T * ( p.k1 + 1.0 ) ) / ( T + p.k1 * ( 1.0 - p.b ) ) * ( 1.0 + 1e-9 );
 }
 
 // ── input blow-up guard: bound the UNIQUE term count a query can spend on tfFlat's S×terms allocation ────
@@ -525,7 +476,8 @@ inline std::vector<float> lexicalScoresTiered( const IngestResult& ing, const st
                                                std::size_t pruneTopK, const std::vector<char>* alwaysExact,
                                                const std::vector<float>* symbolScoreMul, int pathFieldDefaultW = 0,
                                                int basenameFieldDefaultW = 0, std::string_view pathRootPrefix = {},
-                                               LexTermEvidence* evidenceOut = nullptr )   // L-W: the term evidence, read back out (see the struct)
+                                               LexTermEvidence* evidenceOut = nullptr,   // L-W: the term evidence, read back out (see the struct)
+                                               LexMatch match = LexMatch::Any )
 {
     PROFILE_SCOPE_DESCRIBE( "lexical: lexicalScores (BM25 over symbols)" );
     const std::size_t S = ing.symbols.size();
@@ -1117,9 +1069,19 @@ inline std::vector<float> lexicalScoresTiered( const IngestResult& ing, const st
         }
     }
 
-    // Stem-only count is the stem row minus the exact row. A stem above max(8, S/64) is left out of tf' and df.
-    std::vector<double> tfPrime;
-    stemBlendedTermFreq( S, uniqueCount, tfFlat.data(), tfStemAll.data(), tfPrime );
+    // The guard table: stem-only count is the stem row minus the exact row, scored by stemguard.h. avgdl accumulates in
+    // fixed doc order, as it always has.
+    double avgdl = 0;
+    for( int d : dl )
+    {
+        avgdl += d;
+    }
+    avgdl /= double( S ? S : 1 );
+    const Bm25Params bm25Params = resolveBm25Params();       // A4: the ONE definition — see above
+    const double     k1 = bm25Params.k1, b = bm25Params.b;
+    const StemGuardTable guard = buildStemGuard( S, uniqueCount, tfFlat.data(), tfStemAll.data(), dl.data(), avgdl, k1, b );
+    // A symbol holds a term when it has it as typed or as a stem.
+    auto held = [&]( std::size_t i, std::size_t u ) { return guard.docCount != 0 && stemGuardMatches( guard, tfFlat.data(), i, u ); };
 
     // ── L-W: the term evidence, read off tf' (exact, plus an admitted stem).
     if( evidenceOut )
@@ -1135,7 +1097,7 @@ inline std::vector<float> lexicalScoresTiered( const IngestResult& ing, const st
             std::uint64_t* words = evidenceOut->anyMask.data() + i * evidenceWords;
             for( std::size_t u = 0; u < uniqueCount; ++u )
             {
-                if( tfPrime[ i * uniqueCount + u ] > 0.0 )
+                if( held( i, u ) )
                 {
                     ++evidenceOut->df[u];
                     words[ u / 64 ] |= std::uint64_t( 1 ) << ( u % 64 );
@@ -1184,7 +1146,7 @@ inline std::vector<float> lexicalScoresTiered( const IngestResult& ing, const st
         {
             for( std::size_t u = 0; u < uniqueCount; ++u )
             {
-                dfMargin[u] += tfPrime[ i * uniqueCount + u ] > 0.0 ? 1 : 0;
+                dfMargin[u] += held( i, u ) ? 1 : 0;
             }
         }
         // "separates" at k bits: idf_u >= k*ln2  ⇔  (S-n+0.5)/(n+0.5) + 1 >= 2^k  ⇔  n <= (S+0.5)/2^k - 0.5,
@@ -1242,142 +1204,127 @@ inline std::vector<float> lexicalScoresTiered( const IngestResult& ing, const st
         }
     }
 
-    // corpus stats — avgdl accumulates in the SAME doc order as before (identical doubles); dfreq[u] =
-    // number of docs containing unique query token u (w ≥ 1, so tf > 0 ⇔ the old docs[i] contained it)
-    double avgdl = 0;
-    for( int d : dl )
-    {
-        avgdl += d;
-    }
-    avgdl /= double( S ? S : 1 );
-
-    const Bm25Params    bm25Params = resolveBm25Params();       // A4: the ONE definition — see above
-    const double        k1 = bm25Params.k1, b = bm25Params.b;
     std::vector<float> score( S, 0.f );
 
+    // ── the guarded score (stemguard.h). One scoring lambda serves both branches, so the pruned and the exhaustive
+    //    results are byte-identical by construction. final = k * (P + 1) + S, where k counts kept query words the
+    //    symbol holds as typed and P bounds every S, so more typed words always rank first.
+    std::vector<int> occCount( uniqueCount, 0 );
+    for( std::size_t qi = 0; qi < qToks.size(); ++qi )
+    {
+        if( uniqueIndexOfQtok[qi] != DedupedQueryTerms::kDroppedTerm )
+        {
+            ++occCount[uniqueIndexOfQtok[qi]];
+        }
+    }
+    // capOcc[u] bounds the term's whole contribution (every occurrence); a suppressed or absent term owns 0.
+    std::vector<double> capOcc( uniqueCount, 0.0 );
+    double              peakBound     = 0.0;
+    std::size_t         requiredCount = 0;   // kept, present terms: what LexMatch::All demands
+    for( std::size_t u = 0; u < uniqueCount; ++u )
+    {
+        if( guard.df.empty() || guard.df[u] == 0 || termKept[u] == 0 )
+        {
+            continue;
+        }
+        capOcc[u] = guard.cap[u] * double( occCount[u] );
+        peakBound += capOcc[u];
+        ++requiredCount;
+    }
+    double bestFinal = -1.0, bestEvidence = 0.0;
+    // Scores one symbol; returns 0 for a symbol the match mode excludes or that holds no kept term.
+    auto scoreSymbol = [&]( std::size_t i ) -> double
+    {
+        double      sum = 0.0;
+        for( std::size_t qi = 0; qi < qToks.size(); ++qi )
+        {
+            const std::size_t u = uniqueIndexOfQtok[qi];
+            if( u == DedupedQueryTerms::kDroppedTerm || termKept[u] == 0 || !held( i, u ) )
+            {
+                continue;
+            }
+            sum += stemGuardWord( guard, tfFlat.data(), dl.data(), avgdl, k1, b, i, u );
+        }
+        int         exactWords = 0;
+        std::size_t heldWords  = 0;
+        for( std::size_t u = 0; u < uniqueCount; ++u )
+        {
+            if( guard.df[u] != 0 && termKept[u] != 0 && held( i, u ) )
+            {
+                ++heldWords;
+                exactWords += tfFlat[ i * uniqueCount + u ] > 0 ? 1 : 0;
+            }
+        }
+        if( match == LexMatch::All && heldWords < requiredCount )
+        {
+            return 0.0;
+        }
+        // Markdown headings (sec) compete on name-match with code; down-weight so a doc stays FINDABLE but
+        // code wins when both match — fixes prose swamping retrieval in doc-heavy repos (review finding #4).
+        if( ing.symbols[i].kind == SymKind::Section )
+        {
+            sum *= 0.30;
+        }
+        const double evidence = sum;                                   // the tier multiplier is divided out of this
+        if( symbolScoreMul && i < symbolScoreMul->size() )
+        {
+            sum *= double( ( *symbolScoreMul )[i] );                   // §P4 tier down-weight — shrink-only, bound-safe
+        }
+        const double fin = stemGuardTier( peakBound, exactWords, sum );
+        if( fin > bestFinal )
+        {
+            bestFinal    = fin;
+            bestEvidence = evidence;
+        }
+        return fin;
+    };
+    auto finishEvidence = [&]()
+    {
+        if( evidenceOut )
+        {
+            evidenceOut->bm25Max = bestEvidence;
+        }
+    };
+
     // ── H2 (B0 round 2): MaxScore-style safe pruning — only when the caller opted in AND the env
-    //    escape hatch is off. The exhaustive branch below is the pre-H2 code, byte-for-byte.
+    //    escape hatch is off. A symbol is skipped only when its upper bound is STRICTLY below the K-th best final
+    //    score so far. The bound is k * (P + 1) + the sum of the caps of the kept terms it holds. Every cap bounds
+    //    its word score (stemguard.h) and both multipliers are in (0, 1], so the bound never falls below the score.
     const bool pruneActive = pruneTopK > 0 && std::getenv( "RIPWIRE_NO_PRUNE" ) == nullptr;
     if( pruneActive )
     {
-        // one pass: candidates (any tf > 0 — every other doc scores EXACTLY the same +0.0f either way),
-        // exact dfreq, and the per-term max weighted tf the impact bound needs. Ascending doc id.
-        std::vector<int>           dfreq( uniqueCount, 0 );
-        std::vector<double>        tfMaxOf( uniqueCount, 0.0 );
-        std::vector<std::uint32_t> candidateIds;
-        candidateIds.reserve( 1024 );
-        for( std::size_t i = 0; i < S; ++i )
-        {
-            bool any = false;
-            for( std::size_t u = 0; u < uniqueCount; ++u )
-            {
-                const double tf = tfPrime[ i * uniqueCount + u ];
-                if( tf > 0.0 )
-                {
-                    ++dfreq[u];
-                    if( tf > tfMaxOf[u] )
-                    {
-                        tfMaxOf[u] = tf;
-                    }
-                    any = true;
-                }
-            }
-            if( any )
-            {
-                candidateIds.push_back( std::uint32_t( i ) );
-            }
-        }
-
-        // ── the PROVABLY-SAFE per-term impact bound (the MaxScore "max contribution") ────────────────
-        // A term u's contribution to any doc is idf_u × tf(k1+1)/(tf + k1(1−b+b·dl/avgdl)). Two exact
-        // monotonicities bound it: it INCREASES in tf (so tf ≤ T := tfMaxOf[u], the largest weighted tf
-        // of u anywhere in the corpus) and DECREASES in dl (dl ≥ 0 ⇒ the mixed factor ≥ 1−b), giving
-        //   contribution ≤ idf_u × T(k1+1)/(T + k1(1−b))   in REAL arithmetic.
-        // In IEEE doubles each side is computed with ≤ 7 rounded ops (relative error ≤ 7·2⁻⁵³ ≈ 8e-16),
-        // so the ×(1+1e-9) slack — six orders of magnitude above the worst accumulated rounding, and
-        // likewise above the U·2⁻⁵³ summation error of the per-doc bound sum below — makes the COMPUTED
-        // cap strictly ≥ the COMPUTED contribution. The Section ×0.30 down-weight and the §P4 tier
-        // multiplier (both (0,1], shrink-only) only shrink a real score, never the bound.
-        // Hence: bound < θ ⇒ computed score < θ, unconditionally.
-        // capOcc folds in the query-occurrence multiplicity (BM25 adds one contribution PER occurrence).
-        std::vector<double> capOcc( uniqueCount, 0.0 );
-        {
-            std::vector<int> occCount( uniqueCount, 0 );
-            for( std::size_t qi = 0; qi < qToks.size(); ++qi )
-            {
-                if( uniqueIndexOfQtok[qi] == DedupedQueryTerms::kDroppedTerm )
-                {
-                    continue;               // capped past kMaxUniqueQueryTerms — owns no row, no contribution
-                }
-                ++occCount[uniqueIndexOfQtok[qi]];
-            }
-            for( std::size_t u = 0; u < uniqueCount; ++u )
-            {
-                if( dfreq[u] == 0 || termKept[u] == 0 )
-                {
-                    continue; // never contributes anywhere — a suppressed term's cap stays 0, and a cap of
-                              // 0 bounds a contribution of 0, so the MaxScore proof below is unchanged
-                }
-                const int    n    = dfreq[u];
-                const double idf  = std::log( ( double( S ) - n + 0.5 ) / ( n + 0.5 ) + 1.0 );
-                const double T    = tfMaxOf[u];
-                const double cap1 = bm25ImpactBound( idf, T, bm25Params );          // A4: shared bound, same (k1,b)
-                capOcc[u]         = cap1 * double( occCount[u] );
-            }
-        }
-
-        // top-K threshold θ = K-th best exact score seen so far (min-heap; grows monotonically). θ at
-        // skip time ≤ final θ ≤ the true K-th best overall, and skipping needs bound < θ STRICTLY, so a
-        // skipped doc's true score is strictly below the final K-th score — it cannot enter the top-K
-        // even via the (score desc, id asc) tie-break. Docs are processed in ascending id (determinism).
         std::vector<double> heap;                                // min-heap over exact final scores
         heap.reserve( pruneTopK );
         double theta = -1.0;                                     // scores are ≥ 0 ⇒ no skips until K docs scored
-        for( const std::uint32_t i : candidateIds )
+        for( std::size_t i = 0; i < S; ++i )
         {
-            // cheap upper bound: adds only, fixed u-ascending order (deterministic)
-            double ub = 0.0;
+            double      ub         = 0.0;
+            int         exactWords = 0;
+            bool        any        = false;
             for( std::size_t u = 0; u < uniqueCount; ++u )
             {
-                if( tfPrime[ i * uniqueCount + u ] > 0.0 )
+                if( held( i, u ) )
                 {
-                    ub += capOcc[u];
+                    any = true;
+                    if( capOcc[u] > 0.0 )
+                    {
+                        ub += capOcc[u];
+                        exactWords += tfFlat[ i * uniqueCount + u ] > 0 ? 1 : 0;
+                    }
                 }
             }
+            if( !any )
+            {
+                continue;                                        // not a candidate: scores exactly +0.0f either way
+            }
+            ub += double( exactWords ) * ( peakBound + 1.0 );
             const bool mustScore = alwaysExact && i < alwaysExact->size() && (*alwaysExact)[i] != 0;
             if( !mustScore && ub < theta )
             {
                 continue; // provably cannot enter the top-K → skip
             }
-
-            // exact score — the IDENTICAL expressions, in the IDENTICAL order, as the exhaustive branch
-            double sc = 0;
-            for( std::size_t qi = 0; qi < qToks.size(); ++qi )
-            {
-                const std::size_t u  = uniqueIndexOfQtok[qi];
-                if( u == DedupedQueryTerms::kDroppedTerm )
-                {
-                    continue;               // capped past kMaxUniqueQueryTerms — owns no row, no contribution
-                }
-                const double      tf = tfPrime[ i * uniqueCount + u ];
-                if( tf <= 0.0 || termKept[u] == 0 )
-                {
-                    continue; // termKept is all-1 disarmed, so this reads as the historical `tf == 0`
-                }
-                const int    n   = dfreq[u];
-                const double idf = std::log( ( double( S ) - n + 0.5 ) / ( n + 0.5 ) + 1.0 );
-                sc += idf * ( tf * ( k1 + 1.0 ) ) / ( tf + k1 * ( 1.0 - b + b * dl[i] / ( avgdl > 0 ? avgdl : 1.0 ) ) );
-            }
-            if( ing.symbols[i].kind == SymKind::Section )
-            {
-                sc *= 0.30;
-            }
-            if( symbolScoreMul && i < symbolScoreMul->size() )
-            {
-                sc *= double( ( *symbolScoreMul )[i] ); // §P4 tier down-weight — shrink-only, bound-safe
-            }
-            score[i] = float( sc );
-
+            const double sc = scoreSymbol( i );
+            score[i]        = float( sc );
             if( heap.size() < pruneTopK )
             {
                 heap.push_back( sc );
@@ -1395,52 +1342,15 @@ inline std::vector<float> lexicalScoresTiered( const IngestResult& ing, const st
                 theta = heap.front();
             }
         }
+        finishEvidence();
         return score;
     }
 
-    std::vector<int> dfreq( uniqueCount, 0 );
     for( std::size_t i = 0; i < S; ++i )
     {
-        for( std::size_t u = 0; u < uniqueCount; ++u )
-        {
-            if( tfPrime[ i * uniqueCount + u ] > 0.0 )
-            {
-                ++dfreq[u];
-            }
-        }
+        score[i] = float( scoreSymbol( i ) );
     }
-
-    for( std::size_t i = 0; i < S; ++i )
-    {
-        double sc = 0;
-        for( std::size_t qi = 0; qi < qToks.size(); ++qi )
-        {
-            const std::size_t u  = uniqueIndexOfQtok[qi];
-            if( u == DedupedQueryTerms::kDroppedTerm )
-            {
-                continue;                   // capped past kMaxUniqueQueryTerms — owns no row, no contribution
-            }
-            const double      tf = tfPrime[ i * uniqueCount + u ];
-            if( tf <= 0.0 || termKept[u] == 0 )
-            {
-                continue; // old: docs[i].find( qt ) == end — termKept is all-1 disarmed, so this is that
-            }
-            const int    n   = dfreq[u];
-            const double idf = std::log( ( double( S ) - n + 0.5 ) / ( n + 0.5 ) + 1.0 );
-            sc += idf * ( tf * ( k1 + 1.0 ) ) / ( tf + k1 * ( 1.0 - b + b * dl[i] / ( avgdl > 0 ? avgdl : 1.0 ) ) );
-        }
-        // Markdown headings (sec) compete on name-match with code; down-weight so a doc stays FINDABLE but
-        // code wins when both match — fixes prose swamping retrieval in doc-heavy repos (review finding #4).
-        if( ing.symbols[i].kind == SymKind::Section )
-        {
-            sc *= 0.30;
-        }
-        if( symbolScoreMul && i < symbolScoreMul->size() )
-        {
-            sc *= double( ( *symbolScoreMul )[i] ); // §P4 tier down-weight (same factor as the pruned branch)
-        }
-        score[i] = float( sc );
-    }
+    finishEvidence();
     return score;
 }
 
