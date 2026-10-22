@@ -543,9 +543,16 @@ The subtoken BM25 path stems the query token and each document token with the sa
 hash. Relevant inflections map to one hash, and irrelevant words map to different hashes. A bad
 stemmer is `stem(A) == stem(B)` when A and B are irrelevant, or `stem(A) != stem(B)` when they are
 relevant. The stored bytes are not required to be a word. Name-exact ranking does not stem. On the
-stemmed path the stem-only count is divided by the largest stem-only count of that term before the
-0.35 weight, so a stemmed hit cannot outrank one exact token of the same term. That bound is what
-makes a leftover collision acceptable. Irregular forms (`built`, `sent`, `indices`) are left for a
+stemmed path `src/stemguard.h` scores each query word as exact BM25 plus a capped stem part. The stem
+part is theta (0.5) times the weakest exact score of that word, times the stem-only count divided by
+the largest stem-only count. Every symbol that holds the word as typed scores at least that weakest
+exact score, so a stem-only hit cannot outrank one exact hit of the same word, for any stemmer and any
+length. A query-level tier then adds k times (P + 1), where k is the number of query words the symbol
+holds as typed and P bounds every summed word score, so more typed words always rank first. That
+bound is what makes a leftover collision acceptable. There is no stem document-frequency cap.
+`LexMatch::Any` returns a symbol holding any kept word and is what every caller uses today.
+`LexMatch::All` returns only symbols holding every kept word, for a caller that wants AND.
+Measured in `bench/stemabc/RESULTS.md`. Irregular forms (`built`, `sent`, `indices`) are left for a
 synonym list.
 
 ### serialize — minified XML
