@@ -728,9 +728,9 @@ inline std::vector<NodeId> traceServedOrder( const TracePartition& part, const T
 
 // the rank vector packSignatures orders <sigs> by: a strictly descending score down the served order, so
 // the ordering is total and the sort has nothing to break ties on by accident.
-inline std::vector<float> traceRankOf( std::size_t symbolCount, const std::vector<NodeId>& servedOrder )
+inline std::vector<double> traceRankOf( std::size_t symbolCount, const std::vector<NodeId>& servedOrder )
 {
-    std::vector<float> rank( symbolCount, 0.0f );
+    std::vector<double> rank( symbolCount, 0.0 );
     for( std::size_t i = 0; i < servedOrder.size(); ++i )
     {
         rank[ servedOrder[i] ] = float( servedOrder.size() - i );
@@ -1057,7 +1057,7 @@ inline FromTraceResult fromTraceBundleText( const IngestResult& ing, const Graph
     // LB-A: the test-to-source hop — inert (and byte-identical) unless the innermost frame is a test symbol
     const TestHop             hop         = buildTestHop( ing, g, part );
     const std::vector<NodeId> servedOrder = traceServedOrder( part, hop );
-    const std::vector<float>  rank        = traceRankOf( ing.symbols.size(), servedOrder );
+    const std::vector<double> rank        = traceRankOf( ing.symbols.size(), servedOrder );
 
     // W3FIX M3: srcNote is a FILENAME (or an MCP caller's own label), and a filename may legally contain a
     // newline on this platform — `--from-trace=$'…/tr\nace.txt'` put a raw newline both in this comment and in

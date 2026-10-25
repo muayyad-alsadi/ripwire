@@ -79,7 +79,7 @@ struct ExpandLiftInfo
 // Apply structural expansion to lensRank (size == ing.symbols.size()). Returns true if anything moved;
 // `info`, when non-null, is populated with what moved so the caller can disclose it (absent unless the
 // lift actually promoted something — a lift that fired but changed nothing costs zero disclosure bytes).
-inline bool applyStructuralExpansion( const IngestResult& ing, std::vector<float>& lensRank,
+inline bool applyStructuralExpansion( const IngestResult& ing, std::vector<double>& lensRank,
                                       std::size_t seedFiles, std::size_t perSeed, ExpandLiftInfo* info = nullptr )
 {
     if( seedFiles == 0 || perSeed == 0 || lensRank.size() != ing.symbols.size() || lensRank.empty() )
@@ -88,7 +88,7 @@ inline bool applyStructuralExpansion( const IngestResult& ing, std::vector<float
     }
 
     const std::size_t  F = ing.files.size();
-    std::vector<float> fileBest( F, 0.f );
+    std::vector<double> fileBest( F, 0.0 );
     for( std::size_t i = 0; i < lensRank.size(); ++i )
     {
         if( lensRank[i] > 0.f )

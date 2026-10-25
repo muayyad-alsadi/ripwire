@@ -77,7 +77,7 @@ inline std::string_view dirOf( std::string_view path ) noexcept
 // Apply the lift to lensRank (size == ing.symbols.size()). Returns true if anything moved; `info`, when
 // non-null, is populated with what moved so the caller can disclose it (absent unless the lift actually
 // promoted something — a lift that fired but changed nothing costs zero disclosure bytes).
-inline bool applySiblingLift( const IngestResult& ing, std::vector<float>& lensRank, std::size_t seedFiles, std::size_t sibPerSeed,
+inline bool applySiblingLift( const IngestResult& ing, std::vector<double>& lensRank, std::size_t seedFiles, std::size_t sibPerSeed,
                               SibliftLiftInfo* info = nullptr )
 {
     using namespace siblift_detail;
@@ -88,7 +88,7 @@ inline bool applySiblingLift( const IngestResult& ing, std::vector<float>& lensR
 
     // per-file best existing score — the seed ranking AND the sibling-evidence guard read this
     const std::size_t  F = ing.files.size();
-    std::vector<float> fileBest( F, 0.f );
+    std::vector<double> fileBest( F, 0.0 );
     for( std::size_t i = 0; i < ing.symbols.size(); ++i )
     {
         fileBest[ ing.symbols[i].fileId ] = std::max( fileBest[ ing.symbols[i].fileId ], lensRank[i] );

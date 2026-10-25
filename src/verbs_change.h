@@ -1300,7 +1300,7 @@ std::optional<int> runPlanLanes( const MainDispatch& d )
     // the rankings — ONE per lane in brief mode, one for the whole task in auto-carve. Same computeLensRanking
     // --for and --pack-task use, so every routing/mention/doc-mention behaviour applies identically here.
     LensRanking                     carveRanking;
-    std::vector<std::vector<float>> laneRanks;
+    std::vector<std::vector<double>> laneRanks;
     if( in.autoCarve )
     {
         carveRanking  = computeLensRanking( d, in.task );

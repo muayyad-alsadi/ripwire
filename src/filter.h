@@ -684,13 +684,14 @@ inline std::vector<float> rankTierSymbolMultipliers( const IngestResult& ing )
 // that evidence; de-prioritized is not absent. (Under MaxScore pruning a down-weighted entry outside the
 // kept head stays 0 and escapes the divide-back — only material within a ~3x band of the threshold, far
 // inside the calibrated margin documented at kWeakLexicalScoreThreshold.)
-inline float maxScoreUndoingTier( const std::vector<float>& rank, const std::vector<float>& tierMul )
+template<class Score>
+inline float maxScoreUndoingTier( const std::vector<Score>& rank, const std::vector<float>& tierMul )
 {
     ASSUME( rank.size() == tierMul.size() );
     float rawMax = 0.f;
     for( std::size_t i = 0; i < rank.size() && i < tierMul.size(); ++i )
     {
-        rawMax = std::max( rawMax, tierMul[i] > 0.f ? rank[i] / tierMul[i] : rank[i] );
+        rawMax = std::max( rawMax, tierMul[i] > 0.f ? float( rank[i] / tierMul[i] ) : float( rank[i] ) );
     }
     return rawMax;
 }

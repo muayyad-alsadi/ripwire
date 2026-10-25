@@ -46,7 +46,7 @@ namespace rw
 // applyCoChangeBoost calls either side.
 struct LensRanking
 {
-    std::vector<float> rank;
+    std::vector<double> rank;
     std::string        routeNote;
     std::string        mentionNote;
     std::string        boostNote;
@@ -541,7 +541,7 @@ struct PackTaskInputs
     // byte budget CUTS it — serialize.h CalleeCallsSink::rank carries the finding and the measurement.
     // packTaskBundleText fills this from its own LensRanking (below, beside the fanIn self-supply), so
     // every caller — CLI --pack-task and the MCP verb alike — gets the ranked cut without spelling it.
-    const std::vector<float>*          calleeRank = nullptr;
+    const std::vector<double>*         calleeRank = nullptr;
 
     // §6 --partition: a PRE-COMPUTED Q3 clone-membership lens. findClones() is a pure function of `ing`, so a
     // fan-out that assembles N+1 bundles from the SAME index would otherwise pay for N+1 identical clone
@@ -910,10 +910,10 @@ inline void partitionByEligibility( const std::vector<NodeId>& topRanked, const 
 // R2: everything outside `eligibleIds` is pinned to -1 (below any real, non-negative score) so
 // packSignatures' own internal top-N selection naturally lands on exactly `eligibleIds`, in their original
 // relative order — no pull-up of a lower-ranked, still-ineligible candidate to fill the gap.
-inline std::vector<float> buildMaskedRank( const IngestResult& ing, const std::vector<float>& rank,
+inline std::vector<double> buildMaskedRank( const IngestResult& ing, const std::vector<double>& rank,
                                            const std::vector<NodeId>& eligibleIds )
 {
-    std::vector<float> masked( ing.symbols.size(), -1.0f );
+    std::vector<double> masked( ing.symbols.size(), -1.0 );
     for( NodeId id : eligibleIds )
     {
         if( id < masked.size() )
@@ -957,7 +957,7 @@ struct RankingSectionInputs
     const std::vector<NodeId>*        eligibleIds;
     const std::vector<NodeId>*        d2plusIds;
     const std::vector<NodeId>*        topRanked;
-    const std::vector<float>*         maskedRank;
+    const std::vector<double>*        maskedRank;
     std::size_t                       sigsBudget;
     const PackTaskInputs*             in;
     const std::vector<std::uint8_t>*  forClone;
@@ -1451,7 +1451,7 @@ inline std::string packTaskBundleText( const IngestResult& ing, const Graph& g, 
     in.renderFaults                   = &renderFaults;
     if( !in.fanIn ) { localFanIn = fanInFromInEdges( ing, g );  in.fanIn = &localFanIn; }
 
-    const std::vector<float>& rank     = lr.rank;
+    const std::vector<double>& rank     = lr.rank;
     in.calleeRank                      = &rank;   // this bundle HAS a query: its bodies' <calls> listings are cut by relevance, not by node id
     const int                 rankTopN = in.rankTopN > 0 ? int( in.rankTopN ) : kPackTaskRankTopN;
 
@@ -1575,7 +1575,7 @@ inline std::string packTaskBundleText( const IngestResult& ing, const Graph& g, 
     // ── section 1 — routed+anchored ranking, now DISTANCE-MASKED (R2): only d0∪d1 members of the topRanked
     //    window keep full signature+doc detail; d2plus is a bare name-only <far> sub-block spliced just
     //    inside </sigs> (still section 1, never a 6th top-level section) — see renderRankingWithFar above.
-    const std::vector<float>  maskedRank = buildMaskedRank( ing, rank, eligibleIds );
+    const std::vector<double> maskedRank = buildMaskedRank( ing, rank, eligibleIds );
     const std::size_t         sigsBudget = sectionBudget( kPackTaskQuotaRankingPct, /*carryIn=*/0 );
     const RankingSectionInputs rankIn{ &eligibleIds, &d2plusIds, &topRanked, &maskedRank, sigsBudget, &in, &forClone };
     RankingSection             rankOut   = renderRankingWithFar( ing, rankIn, ex );

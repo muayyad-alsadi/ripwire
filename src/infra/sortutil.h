@@ -46,7 +46,8 @@ constexpr bool svLess( std::string_view a, std::string_view b ) noexcept
 }
 
 
-inline bool lessByScoreDescId( const std::vector<float>& scores, std::uint32_t a, std::uint32_t b ) noexcept
+template<class Score>
+inline bool lessByScoreDescId( const std::vector<Score>& scores, std::uint32_t a, std::uint32_t b ) noexcept
 {
     if( scores[a] != scores[b] )
     {
@@ -161,6 +162,22 @@ inline void radixSortByScoreDescId( std::vector<std::uint32_t>& order, const std
 {
     std::vector<std::uint32_t> scratch;
     radixSortByScoreDescId( order, scores, scratch );
+}
+
+// Lexical tier scores are doubles: k*(P+1)+S at a long query sits far enough above 1 that a float's ULP
+// swallows distinct content scores inside one tier. The comparator is a total order, so std::sort here is
+// deterministic. The float overload above keeps its radix for the PageRank vector.
+inline void radixSortByScoreDescId( std::vector<std::uint32_t>& order, const std::vector<double>& scores )
+{
+    for( std::uint32_t id : order )
+    {
+        if( id >= scores.size() || !std::isfinite( scores[ id ] ) )
+        {
+            std::sort( order.begin(), order.end() );
+            return;
+        }
+    }
+    std::sort( order.begin(), order.end(), [ &scores ]( std::uint32_t a, std::uint32_t b ) noexcept { return lessByScoreDescId( scores, a, b ); } );
 }
 
 // Ascending sort for a dense set of 32-bit ids held in a plain vector, radix above a size

@@ -1779,7 +1779,11 @@ int runDefaultMap( const MainDispatch& d )
         return 1;   // the refusal is on stderr (inDirMatchesCrawl)
     }
 
-    std::vector<float> rank;
+    std::vector<double> rank;
+    const auto widenRank = []( const std::vector<float>& v )
+    {
+        return std::vector<double>( v.begin(), v.end() );
+    };
     // The map scope (docs/EVALS.md "Map data Sections never crowd code out of the default map"): the plain map — XML,
     // --json, --html, --max-tokens — at the default --rank-by with no payload verb picks its rows code-first
     // (serialize.h codeFirstKeep) and discloses the Sections that pick swapped out. The rank vector is untouched.
@@ -1818,8 +1822,14 @@ int runDefaultMap( const MainDispatch& d )
         if( !cfg.noRoute )
         {
             const RouteChoice rc = chooseForRanker( ing, cfg.query );
-            rank = ( rc.which == LexMode::NameExact ) ? lexicalScoresNameExactRanked( ing, cfg.query, &tierMul )
-                                                      : lexicalScoresTiered( ing, g.outOff, g.outTargets, cfg.query, 0, nullptr, &tierMul );
+            if( rc.which == LexMode::NameExact )
+            {
+                rank = widenRank( lexicalScoresNameExactRanked( ing, cfg.query, &tierMul ) );
+            }
+            else
+            {
+                rank = lexicalScoresTiered( ing, g.outOff, g.outTargets, cfg.query, 0, nullptr, &tierMul );
+            }
             // §B4 (capture-audit-4) — the SEVENTH comment-echo site, and the only one W3FIX M3 missed. It
             // hand-rolled the std::unique dash collapse that xmlCommentText's header names as the pattern it
             // replaced, and scrubbed NEITHER control bytes nor invalid UTF-8 — while RouteChoice::reason
@@ -1868,18 +1878,18 @@ int runDefaultMap( const MainDispatch& d )
         }
         if( gitOk )
         {
-            rank = rw::takeRank( rankGraphTeleport( g, diffTeleport( ing, changed ) ), rankDisclosure );
+            rank = widenRank( rw::takeRank( rankGraphTeleport( g, diffTeleport( ing, changed ) ), rankDisclosure ) );
         }
         else
         {
             rw::emitRaw( stderr, "ripwire: --map-diff requires git in PATH; using uniform ranking\n" );
-            rank = rw::takeRank( rankGraph( g ), rankDisclosure );
+            rank = widenRank( rw::takeRank( rankGraph( g ), rankDisclosure ) );
         }
     }
     else if( cfg.rankBy == RankBy::Churn || cfg.rankBy == RankBy::ChurnDecay )
     {
         ChurnRanking cr = churnRankedGraph( d );        // §A9.6: the ranking and the window label it must disclose
-        rank             = std::move( cr.rank );
+        rank             = widenRank( cr.rank );
         rankDisclosure   = cr.pr;                    // W2-F: churn is a PageRank TELEPORT variant — it runs the power iteration too
         churnWindowLabel = std::move( cr.window );   // §B2.2: already carries "(no churn evidence)" when the window mined nothing
         recentFiles      = std::move( cr.recent );   // F3: the <recent> rows (churn-decay, single-root; empty otherwise)
@@ -1893,7 +1903,7 @@ int runDefaultMap( const MainDispatch& d )
     }
     else
     {
-        rank = rw::takeRank( rankGraph( g ), rankDisclosure );
+        rank = widenRank( rw::takeRank( rankGraph( g ), rankDisclosure ) );
     }
 
     // HITS: surface hubs (entrypoints/orchestrators) or authorities (core APIs) instead of the default
@@ -1903,14 +1913,17 @@ int runDefaultMap( const MainDispatch& d )
         auto [ authority, hub ] = hits( g );
         if( cfg.rankBy == RankBy::Rrf )
         {
-            rank = rrfFuse( { &rank, &authority, &hub } );   // fuse pagerank + authority + hub
+            {
+                const std::vector<float> rankF( rank.begin(), rank.end() );
+                rank = widenRank( rrfFuse( { &rankF, &authority, &hub } ) );   // fuse pagerank + authority + hub
+            }
         }
         else
         {
             // W2-F: hub and authority REPLACE the PageRank vector, so its disclosure must not survive either
             // (rrf above KEEPS it — pagerank is one of the three vectors it fuses, so that run shaped the order).
             rankDisclosure = rw::RankDisclosure{};
-            rank           = ( cfg.rankBy == RankBy::Hub ) ? std::move( hub ) : std::move( authority );
+            rank           = widenRank( ( cfg.rankBy == RankBy::Hub ) ? hub : authority );
         }
     }
 
@@ -2438,7 +2451,7 @@ int runDefaultMap( const MainDispatch& d )
     // SAME-NAMED DEFINITIONS FIRST (serialize.h calleeNameSpecificity: why that and not the map's PageRank, with the
     // measurement). Built only when a body is expanded; the same vector rides the two emissions below, so the
     // charged render and the emitted one cannot differ.
-    const std::vector<float> calleeOrder = expandNodes.empty() ? std::vector<float>{} : rw::calleeNameSpecificity( ing );
+    const std::vector<double> calleeOrder = expandNodes.empty() ? std::vector<double>{} : rw::calleeNameSpecificity( ing );
     EmittedBodies            expandRecord;   // expand-lean-k64: which requested bodies the render above actually emitted
     if( !expandNodes.empty() )
     {

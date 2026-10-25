@@ -783,11 +783,18 @@ inline int runEvalSkills( const std::string& root, const IngestResult& ing, cons
         {
             // the SHIPPING --for computation over the skills/ ingest (exactly --eval-mined's arm shape:
             // routed lexical scores, max-pooled to files), then max-pooled once more to skill dirs.
-            const RouteChoice        rc   = chooseForRanker( ing, row.prompt );
-            const std::vector<float> base = ( rc.which == LexMode::NameExact )
-                                          ? lexicalScoresNameExact( ing, row.prompt )
-                                          : lexicalScores( ing, g.outOff, g.outTargets, row.prompt );
-            const std::vector<float> fileScore = maxPoolToFiles( ing, base, fileCount );
+            const RouteChoice rc = chooseForRanker( ing, row.prompt );
+            std::vector<double>   base;
+            if( rc.which == LexMode::NameExact )
+            {
+                const std::vector<float> exact = lexicalScoresNameExact( ing, row.prompt );
+                base.assign( exact.begin(), exact.end() );
+            }
+            else
+            {
+                base = lexicalScores( ing, g.outOff, g.outTargets, row.prompt );
+            }
+            const std::vector<double> fileScore = maxPoolToFiles( ing, base, fileCount );
             std::vector<double>      pooled( skillCount, 0.0 );
             for( std::uint32_t f = 0; f < fileCount; ++f )
             {

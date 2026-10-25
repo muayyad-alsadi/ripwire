@@ -2882,7 +2882,8 @@ inline void writeMapInventoryXml( XmlWriter& w, const IngestResult& ing, const M
     w.write( "</inv>" );
 }
 
-inline void serialize( std::FILE* out, const IngestResult& ing, const std::vector<float>& rank,
+template<class Score>
+inline void serialize( std::FILE* out, const IngestResult& ing, const std::vector<Score>& rank,
                        const std::vector<std::uint32_t>& outOff, const std::vector<NodeId>& outTargets,
                        int topK, bool mostImportantLast = false,
                        bool metrics = false, const std::vector<std::uint32_t>* fanIn = nullptr,
@@ -3899,7 +3900,8 @@ inline std::string packSourceCutHead( bool cutOne, std::size_t shown, std::size_
     return head;
 }
 
-inline void packSource( std::FILE* out, const IngestResult& ing, const std::vector<float>& rank,
+template<class Score>
+inline void packSource( std::FILE* out, const IngestResult& ing, const std::vector<Score>& rank,
                         int topN, std::size_t budgetBytes, RedactCounts* redact )
 {
     const std::size_t F = ing.files.size();
@@ -5000,7 +5002,8 @@ inline std::size_t reorderHeadRoundRobin( std::vector<EntryT>& entries, FileOf&&
 // The `topN == 0 ⇒ all` convention below makes an empty kept set unrepresentable through topN alone, which
 // is why this is a floor applied AFTER `keep` rather than a caller-side clamp: a query nothing scores on
 // must emit ZERO rows, not the whole corpus.
-inline std::size_t relevanceFlooredKeep( const std::vector<NodeId>& order, const std::vector<float>& rank, std::size_t keep ) noexcept
+template<class Score>
+inline std::size_t relevanceFlooredKeep( const std::vector<NodeId>& order, const std::vector<Score>& rank, std::size_t keep ) noexcept
 {
     while( keep > 0 && order[ keep - 1 ] < rank.size() && !( rank[ order[ keep - 1 ] ] > 0.0f ) )
     {
@@ -5038,7 +5041,8 @@ struct RelevanceFloorCut
     int         topN;   // the narrowed quota (never above the requested one)
     std::string note;
 };
-inline RelevanceFloorCut relevanceFloorCut( const std::vector<float>& rank, int topN )
+template<class Score>
+inline RelevanceFloorCut relevanceFloorCut( const std::vector<Score>& rank, int topN )
 {
     std::size_t positiveCount = 0;
     for( const float s : rank )
@@ -5686,7 +5690,8 @@ struct SigRowSpelling
     bool elideZeroMetrics = false;   // omit a zero cx=/ccx=/in= on a row (SigRowFacts::elideZero); the legend says absent = 0
 };
 
-inline void packSignatures( std::FILE* out, const IngestResult& ing, const std::vector<float>& rank,
+template<class Score>
+inline void packSignatures( std::FILE* out, const IngestResult& ing, const std::vector<Score>& rank,
                             int topN, std::size_t budgetBytes,
                             bool metrics = false, const std::vector<std::uint32_t>* fanIn = nullptr,
                             const std::vector<char>* impure = nullptr, RedactCounts* redact = nullptr,
@@ -6436,7 +6441,8 @@ inline std::string candidatesRootTag( std::size_t keep, std::size_t corpusCount,
     return tag + ">";
 }
 
-inline void packCandidates( std::FILE* out, const IngestResult& ing, const std::vector<float>& rank, int cap,
+template<class Score>
+inline void packCandidates( std::FILE* out, const IngestResult& ing, const std::vector<Score>& rank, int cap,
                             RedactCounts* redact,                 // §B0/W3-N1: REQUIRED — <sig> is emitted text (nullptr = --no-redact)
                             CandidateProvenance prov = {},
                             std::string_view rootArg = {} )       // R-R (2026-08-24): same single-root-only root
@@ -6731,7 +6737,7 @@ struct CalleeCallsSink
     // the sixteen LOWEST node ids on --for, --pack-task and --from-trace, the three verbs that always
     // have a query. The ordering is a property of a CUT listing, not of a rendering, so the condition is
     // now the rank alone and packBodies threads one in (`calleeRank`); gate test/callsrankordercheck.sh.
-    const std::vector<float>*     rank = nullptr;
+    const std::vector<double>*    rank = nullptr;
     // FE-B: Graph::outNameOnly (parallel to outTargets), so a callee row whose edge is name-only carries via="name" — the
     // same bit --callees prints. nullptr / empty ⇒ no row is marked.
     const std::vector<std::uint8_t>* nameOnly = nullptr;
@@ -6800,11 +6806,11 @@ inline std::vector<NodeId> calleeWalkOrder( NodeId id, const std::vector<std::ui
     {
         return walk;                                   // the CSR's own order, materialized (see below)
     }
-    const std::vector<float>& rk = *sink.rank;
+    const std::vector<double>& rk = *sink.rank;
     std::sort( walk.begin(), walk.end(), [ & ]( NodeId a, NodeId b )
     {
-        const float ra = a < rk.size() ? rk[a] : 0.0f;
-        const float rb = b < rk.size() ? rk[b] : 0.0f;
+        const double ra = a < rk.size() ? rk[a] : 0.0;
+        const double rb = b < rk.size() ? rk[b] : 0.0;
         if( ra != rb )
         {
             return ra > rb;
@@ -6843,7 +6849,7 @@ inline bool isCallableKind( SymKind k ) noexcept
     return ( ( kCallableKindBits >> unsigned( k ) ) & 1u ) != 0u;
 }
 
-inline std::vector<float> calleeNameSpecificity( const IngestResult& ing )
+inline std::vector<double> calleeNameSpecificity( const IngestResult& ing )
 {
     HashMap<std::string_view, std::uint32_t> callableDefsOfName;
     callableDefsOfName.reserve( ing.symbols.size() );
@@ -6854,7 +6860,7 @@ inline std::vector<float> calleeNameSpecificity( const IngestResult& ing )
             ++callableDefsOfName[ std::string_view( s.name ) ];
         }
     }
-    std::vector<float> score( ing.symbols.size(), 0.0f );
+    std::vector<double> score( ing.symbols.size(), 0.0 );
     for( std::size_t i = 0; i < ing.symbols.size(); ++i )
     {
         const Symbol&       s  = ing.symbols[i];
@@ -7536,7 +7542,7 @@ inline void packBodies( std::FILE* out, const IngestResult& ing, const std::vect
                                                                         //   false (every caller but --expand) ⇒ byte-identical.
                         std::string_view rootArg = {},   // R-E (2026-08-17): same single-root-only root
                                                           // argument serialize() takes — see its comment.
-                        const std::vector<float>* calleeRank = nullptr,   // orders each body's CUT <calls> listing: the query relevance
+                        const std::vector<double>* calleeRank = nullptr,   // orders each body's CUT <calls> listing: the query relevance
                                                                             //   on --for/--pack-task/--from-trace, calleeNameSpecificity on
                                                                             //   --expand; nullptr (--around/--exemplar) ⇒ node-id order.
                                                                             //   See CalleeCallsSink::rank.
@@ -7985,7 +7991,7 @@ struct OwnerHopRows
 template <typename PathRelFn, typename ContentOfFn>
 inline OwnerHopRows packOwnerHopRows( const IngestResult& ing, const std::vector<NodeId>& nodes, const HopOwners* owners,
                                       const std::vector<std::uint32_t>& outOff, const std::vector<NodeId>& outTargets,
-                                      const CalleeEdgeBytes& outEdges, RedactCounts* redact, const std::vector<float>* rank,
+                                      const CalleeEdgeBytes& outEdges, RedactCounts* redact, const std::vector<double>* rank,
                                       std::string_view rootArg, std::size_t rankedBudget, bool rankedVia,
                                       PathRelFn&& pathRel, ContentOfFn&& contentOf, std::vector<char>& esc )
 {
@@ -8100,7 +8106,7 @@ inline void packHops( std::FILE* out, const IngestResult& ing, const std::vector
                       const std::vector<std::uint32_t>& outOff, const std::vector<NodeId>& outTargets,
                       const CalleeEdgeBytes& outEdges,   // FE-B: Graph::outNameOnly — the <c> rows' via="name" (+ Q1's outProv)
                       RedactCounts* redact = nullptr,
-                      const std::vector<float>* rank = nullptr, // query relevance, for ordering a CUT callee listing
+                      const std::vector<double>* rank = nullptr, // query relevance, for ordering a CUT callee listing
                       std::string_view rootArg = {},            // R-E: same single-root-only root= every verb takes
                       CalleeLegendsInHead legendsInHead = {},   // FE-B (+ Q1): packBodies' parameter of the same name
                       const HopOwners* owners = nullptr )       // owner-hop: the leading owner rows; nullptr ⇒ none (byte-identical)
@@ -9051,7 +9057,8 @@ inline void packRoutes( std::FILE* out, const IngestResult& ing,
 // worth it only when the reading agent renders mermaid natively.
 inline constexpr std::size_t kWithGraphNodeCap = 8;
 
-inline void packGraphBlock( std::FILE* out, const IngestResult& ing, const std::vector<float>& rank,
+template<class Score>
+inline void packGraphBlock( std::FILE* out, const IngestResult& ing, const std::vector<Score>& rank,
                             const std::vector<std::uint32_t>& outOff, const std::vector<NodeId>& outTargets )
 {
     const std::size_t S = ing.symbols.size();
@@ -9485,8 +9492,9 @@ inline void writeLegoImplRow( XmlWriter& w, const IngestResult& ing, NodeId id, 
 // §P3: the bundle embeddings pass withPaths=true as well — the bundle form of a verb must never carry less
 // identity than its standalone form, and without p= this repo's two different `Circle`s render as one
 // duplicated row. They also pass an implementors map pre-scoped to the task (legoImplementorsOnSurface).
+template<class Score>
 inline void packLego( std::FILE* out, const IngestResult& ing, const std::vector<std::vector<NodeId>>& implementors,
-                      const std::vector<float>& rank, int topN,
+                      const std::vector<Score>& rank, int topN,
                       RedactCounts* redact,                       // §B0/W3-N1: REQUIRED — the <m> contract sigs are emitted text
                       const std::vector<char>* impure = nullptr,
                       NodeId focusId = kNoNode, bool withPaths = false,
@@ -10700,7 +10708,8 @@ inline void writeMapInventoryJson( JsonWriter& w, const IngestResult& ing, const
 //     with the same `"overloads":N` (>1 only) discriminator.
 //   * prov/precise: an edge the SCIP overlay or an FFI binding actually PINNED read identical to a
 //     name-guessed one. Same absent-unless-present rule as the XML attribute.
-inline void serializeJson( std::FILE* out, const IngestResult& ing, const std::vector<float>& rank,
+template<class Score>
+inline void serializeJson( std::FILE* out, const IngestResult& ing, const std::vector<Score>& rank,
                            const std::vector<std::uint32_t>& outOff, const std::vector<NodeId>& outTargets,
                            int topK, bool mostImportantLast, bool metrics,
                            const std::vector<std::uint32_t>* fanIn, const std::vector<std::uint32_t>* ambOut,
@@ -11225,6 +11234,7 @@ inline std::size_t collectedJsonNoteTotal( const std::vector<JsonSigFile>& files
 // --json` shipped the raw credentials their XML siblings redact, on the surface most likely to be piped
 // into logs/CI/model context. A REQUIRED parameter turns the next twin's omission into a compile error
 // instead of a silent leak. Pass nullptr for --no-redact (the same convention redactInPlace already has).
+template<class Score>
 inline std::size_t collectJsonSigEntries( const IngestResult& ing, const std::vector<std::uint32_t>& fileOrder,
                                    std::vector<std::vector<NodeId>>& buckets,
                                    const std::vector<std::uint32_t>& globalRankOf,
@@ -11232,7 +11242,7 @@ inline std::size_t collectJsonSigEntries( const IngestResult& ing, const std::ve
                                    std::vector<JsonSigFile>& outFiles, std::vector<JsonSigEntry>& outEntries,
                                    std::string_view rootArg = {},   // R-E (2026-08-17): same single-root-only
                                                                      // root argument serialize() takes.
-                                   const std::vector<float>* rank = nullptr,          // A2: the score vector, for
+                                   const std::vector<Score>* rank = nullptr,          // A2: the score vector, for
                                                                                        //   the positive/content-skip
                                                                                        //   split below. nullptr ⇒
                                                                                        //   the tracking is skipped
@@ -11354,7 +11364,8 @@ inline std::size_t collectJsonSigEntries( const IngestResult& ing, const std::ve
 // they are one cohesive thing (the quality lens the row carries), the old flat form was a 12-parameter
 // signature where three adjacent `const std::vector<std::uint8_t>*` arguments could be transposed with no
 // diagnostic, and adding the budget as three more would have made it fifteen.
-inline void packSignaturesJson( std::FILE* out, const IngestResult& ing, const std::vector<float>& rank,
+template<class Score>
+inline void packSignaturesJson( std::FILE* out, const IngestResult& ing, const std::vector<Score>& rank,
                                 int topN, const JsonSigLens& lens,
                                 RedactCounts* redact,                      // §B0: REQUIRED (no default) — see collectJsonSigEntries; nullptr = --no-redact
                                 std::size_t budgetBytes        = 0,        // per-entry streaming budget (cfg.packBudgetBytes); 0 = unlimited

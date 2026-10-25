@@ -37,7 +37,7 @@
 namespace rw
 {
 
-struct Recalled { std::uint32_t fileId; float score; docparse::GeneratedDocReason generated; };
+struct Recalled { std::uint32_t fileId; double score; docparse::GeneratedDocReason generated; };
 
 // §P2b — the corpus-level facts the generated-doc de-prioritization needs: which doc files are GENERATED
 // artifacts (and on what evidence), plus the median doc size those verdicts were measured against. One
@@ -213,7 +213,7 @@ inline bool recallOrderLess( const Recalled& a, const Recalled& b, const IngestR
     return ing.files[ a.fileId ] < ing.files[ b.fileId ];   // deterministic tiebreak
 }
 
-inline RecallSelection recallTopFiles( const IngestResult& ing, const std::vector<float>& scores, int k, bool docsOnly )
+inline RecallSelection recallTopFiles( const IngestResult& ing, const std::vector<double>& scores, int k, bool docsOnly )
 {
     // docsOnly: restrict to DOCUMENT files (docFileMask, above) — recall = "what I already KNOW" (notes / plans /
     // designs), not code (that's --for / --grep). Over a mixed code+docs tree this keeps code files from
@@ -222,7 +222,7 @@ inline RecallSelection recallTopFiles( const IngestResult& ing, const std::vecto
     const std::vector<char>    isDoc    = docFileMask( ing );
     const GeneratedDocVerdicts verdicts = docsOnly ? classifyGeneratedDocs( ing, isDoc ) : GeneratedDocVerdicts{};
 
-    std::vector<float> best( ing.files.size(), 0.f );
+    std::vector<double> best( ing.files.size(), 0.0 );
     for( std::size_t i = 0; i < ing.symbols.size() && i < scores.size(); ++i )
     {
         const std::uint32_t f = ing.symbols[i].fileId;
@@ -238,7 +238,7 @@ inline RecallSelection recallTopFiles( const IngestResult& ing, const std::vecto
     RecallSelection selection;
     for( std::uint32_t f = 0; f < ing.files.size(); ++f )
     {
-        if( best[f] <= 0.f )
+        if( best[f] <= 0.0 )
         {
             continue;
         }
@@ -715,7 +715,7 @@ inline std::string formatDemotedNote( docparse::GeneratedDocReason reason )
 // The score is the ONE genuinely bounded interpoland (a double under "%.3f" is at most 314 bytes: sign +
 // DBL_MAX's 309 integer digits + '.' + 3), and it is appended as a NUL-TERMINATED C string, so even a
 // hypothetical truncation could only shorten the text — it can never read past the buffer.
-inline std::string formatRecallSeparator( std::string_view path, float score, std::string_view demotedNote )
+inline std::string formatRecallSeparator( std::string_view path, double score, std::string_view demotedNote )
 {
     char scoreText[ 352 ];
     rw::formatTo( scoreText, sizeof( scoreText ), "{:.3f}", double( score ) );
@@ -841,7 +841,7 @@ struct RecallSectionPick
 {
     std::uint32_t symIndex = 0;
     std::uint32_t ownEndByte = 0;   // §RP3.1 — the next heading of ANY depth, else this section's own end
-    float         score      = 0.f;   // §RP3.3 — the attributed RANK KEY, not a score anything prints
+    double        score      = 0.0;   // §RP3.3 — the attributed RANK KEY, not a score anything prints
 };
 
 // One emitted section unit: where its text sits inside the document-order body, and which source
@@ -981,12 +981,12 @@ inline bool ownProseCarriesQueryTerm( std::string_view prose, const std::vector<
     return false;
 }
 
-inline std::vector<float> recallOwnProseEvidence( const IngestResult& ing, const std::vector<std::uint32_t>& headingSyms,
+inline std::vector<double> recallOwnProseEvidence( const IngestResult& ing, const std::vector<std::uint32_t>& headingSyms,
                                                   const std::vector<std::uint32_t>& ownEnds, std::string_view raw,
                                                   const std::vector<std::string>& queryToks )
 {
     const std::size_t  unitCount = headingSyms.size();
-    std::vector<float> evidence( unitCount, 0.f );
+    std::vector<double> evidence( unitCount, 0.0 );
 
     std::vector<std::string> uniqueToks;   // duplicate query words must not double-count df
     for( const std::string& q : queryToks )
@@ -1053,7 +1053,7 @@ inline std::vector<float> recallOwnProseEvidence( const IngestResult& ing, const
         {
             exactWords += tf[ u * termCount + t ] > 0 ? 1 : 0;
         }
-        evidence[u] = float( stemGuardTier( peakBound, exactWords, sum ) );
+        evidence[u] = stemGuardTier( peakBound, exactWords, sum );
     }
     return evidence;
 }
@@ -1142,8 +1142,8 @@ inline std::vector<std::uint32_t> recallOwnEndBytes( const IngestResult& ing, co
 // walk the admission test above makes. A subtree carrying no evidence at all is possible, since the scorer
 // also reads the path and basename fields, which are not prose; it demotes nothing, because there is no
 // attribution to make and inventing one would be a guess.
-inline float recallAttributedScore( const IngestResult& ing, const std::vector<std::uint32_t>& headingSyms,
-                                    const std::vector<float>& ownEvidence, std::size_t p, float scorerScore )
+inline double recallAttributedScore( const IngestResult& ing, const std::vector<std::uint32_t>& headingSyms,
+                                     const std::vector<double>& ownEvidence, std::size_t p, double scorerScore )
 {
     const std::uint32_t subtreeEnd         = ing.symbols[ headingSyms[p] ].endByte;
     double              strongestInSubtree = ownEvidence[p];
@@ -1155,16 +1155,16 @@ inline float recallAttributedScore( const IngestResult& ing, const std::vector<s
     {
         return scorerScore;
     }
-    return float( double( scorerScore ) * ( double( ownEvidence[p] ) / strongestInSubtree ) );
+        return scorerScore * ( ownEvidence[p] / strongestInSubtree );
 }
 
-inline RecallSectionSelection selectRecallSectionPicks( const IngestResult& ing, const std::vector<float>& scores,
+inline RecallSectionSelection selectRecallSectionPicks( const IngestResult& ing, const std::vector<double>& scores,
                                                         std::uint32_t fileId, std::string_view raw,
                                                         const std::vector<std::string>& queryToks )
 {
     const std::vector<std::uint32_t> headingSyms = recallHeadingSections( ing, scores.size(), fileId );
     const std::vector<std::uint32_t> ownEnds     = recallOwnEndBytes( ing, headingSyms );
-    const std::vector<float>         ownEvidence = recallOwnProseEvidence( ing, headingSyms, ownEnds, raw, queryToks );
+    const std::vector<double>        ownEvidence = recallOwnProseEvidence( ing, headingSyms, ownEnds, raw, queryToks );
 
     // §RP3.1 — own-prose spans, computed over EVERY heading and not only the matching ones: a unit's
     // boundary is the next heading in the document whether or not that heading scored. The result is a
@@ -1241,7 +1241,7 @@ inline RecallSectionSelection selectRecallSectionPicks( const IngestResult& ing,
 }
 
 inline std::optional<RecallSectionBody> buildSectionGranularBody(
-        const IngestResult& ing, const std::vector<float>& scores, std::uint32_t fileId, RedactCounts* redact,
+        const IngestResult& ing, const std::vector<double>& scores, std::uint32_t fileId, RedactCounts* redact,
         const std::vector<std::string>& queryToks )
 {
     if( ing.docText.find( fileId ) != ing.docText.end() )
@@ -1711,7 +1711,7 @@ inline RecallShares allocateRecallShares( const std::vector<std::size_t>& overhe
 // applies to it exactly. nullptr = --no-redact, spelled deliberately. The one caller already passed it.
 // H9: the ceiling arrives as TOKENS (0 = no cap) — the unit the caller asked in and the unit the header
 // discloses. The byte budget is derived here, once, by recallBytesForTokens.
-inline RecallBundle buildRecall( const IngestResult& ing, const std::vector<float>& scores,
+inline RecallBundle buildRecall( const IngestResult& ing, const std::vector<double>& scores,
                                  std::string_view task, int k, std::size_t maxTokens, bool docsOnly,
                                  RedactCounts* redact,
                                  std::string_view rootArg = {},        // R-R: the separator line's path root
@@ -2105,7 +2105,7 @@ inline RecallBundle recallFor( const IngestResult& ing, const std::vector<std::u
     // prints it. Unguarded because rootPrefixOf( "" ) is "" (its trailing-slash loop needs size() > 1), so
     // the multi-root path (empty rootArg, ing.files already labelled) needs no branch.
     const std::string        prefix = rw::sarif::rootPrefixOf( rootArg );
-    const std::vector<float> scores = lexicalScores( ing, outOff, outTargets, task, /*pruneTopK=*/0,
+    const std::vector<double> scores = lexicalScores( ing, outOff, outTargets, task, /*pruneTopK=*/0,
                                                      /*alwaysExact=*/nullptr, /*pathFieldDefaultW=*/1, prefix );
     return buildRecall( ing, scores, task, k, maxTokens, /*docsOnly=*/true, redact, rootArg, budgetTokens );
 }

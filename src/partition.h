@@ -253,7 +253,8 @@ inline std::vector<std::vector<std::uint32_t>> packGroupsIntoBins( const Communi
 }
 
 // THE plan: (repo, task-ranking, N) → core + N disjoint id groups. Pure; no I/O, no wall clock.
-inline PartitionPlan planPartition( const IngestResult& ing, const Graph& g, const std::vector<float>& rank, std::uint32_t partitionCount )
+template<class Score>
+inline PartitionPlan planPartition( const IngestResult& ing, const Graph& g, const std::vector<Score>& rank, std::uint32_t partitionCount )
 {
     ASSUME( partitionCount >= kMinPartitions && partitionCount <= kMaxPartitions );
     PartitionPlan plan;

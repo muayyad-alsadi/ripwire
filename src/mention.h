@@ -185,7 +185,7 @@ struct MentionBoostInfo
 // call actually raised — 0 means the file had nothing to promote (every candidate was already >= slot, or
 // had no positive score at all), which is what lets a caller tell "the lift ran" apart from "the lift
 // moved something" for its own disclosure.
-inline std::uint32_t promoteFileSymbolsToSlot( const IngestResult& ing, std::vector<float>& lensRank, std::uint32_t fileId, float slot )
+inline std::uint32_t promoteFileSymbolsToSlot( const IngestResult& ing, std::vector<double>& lensRank, std::uint32_t fileId, float slot )
 {
     std::vector<std::pair<float, NodeId>> symbols;
     for( std::size_t k = 0; k < ing.symbols.size(); ++k )
@@ -833,7 +833,7 @@ inline bool qualifierPlaces( const IngestResult& ing, const Symbol& s, std::stri
 }
 
 // keep, per file, the one definition with the best (lensRank desc, id asc) — a total order, so ties are integer-exact.
-inline void keepBestPerFile( std::vector<std::pair<std::uint32_t, NodeId>>& v, const Symbol& s, const std::vector<float>& rank )
+inline void keepBestPerFile( std::vector<std::pair<std::uint32_t, NodeId>>& v, const Symbol& s, const std::vector<double>& rank )
 {
     const auto at = std::ranges::find( v, s.fileId, &std::pair<std::uint32_t, NodeId>::first );
     if( at == v.end() )
@@ -919,7 +919,7 @@ inline std::vector<std::pair<std::uint32_t, NodeId>> matchNamedIdents( const Ing
 // beside a real definition and test/fixture-tier targets in files the task does not name (`namedFiles`:
 // B8's resolved file mentions). The ambiguity bound counts EVERY definition first, fixtures and prototypes included.
 // Appends to `out`, deduplicated.
-inline void resolveNamedIdents( const IngestResult& ing, const std::vector<float>& lensRank, const std::vector<NamedIdent>& named,
+inline void resolveNamedIdents( const IngestResult& ing, const std::vector<double>& lensRank, const std::vector<NamedIdent>& named,
                                 const std::vector<std::uint32_t>& namedFiles, std::vector<NodeId>& out )
 {
     EXPECTS( lensRank.size() == ing.symbols.size() );
@@ -977,7 +977,7 @@ inline void resolveNamedIdents( const IngestResult& ing, const std::vector<float
 } // namespace mention_detail
 
 // Apply the mention anchor to `lensRank` (size == ing.symbols.size()). Returns true if anything moved.
-inline bool applyMentionBoost( const IngestResult& ing, std::string_view task, std::vector<float>& lensRank, MentionBoostInfo* outInfo = nullptr )
+inline bool applyMentionBoost( const IngestResult& ing, std::string_view task, std::vector<double>& lensRank, MentionBoostInfo* outInfo = nullptr )
 {
     using namespace mention_detail;
     // EXPECTS, not DASSERT (rv-s2 review, 2026-09-19): same shape as gitmine.h's applyCoChangeBoost — every
@@ -1255,7 +1255,7 @@ struct DocMentionBoostInfo
 //
 // It collects rather than returning bool because the disclosure needs a COUNT: lifted + refused is exactly
 // how many docs the caps had to choose from, which is what doc_mentions_total= reports.
-inline void collectRefusedDocLifts( const Graph& g, const std::vector<float>& lensRank, const std::vector<NodeId>& order,
+inline void collectRefusedDocLifts( const Graph& g, const std::vector<double>& lensRank, const std::vector<NodeId>& order,
                                     std::size_t from, std::size_t to, std::vector<NodeId>& out,
                                     std::span<const float> docNoiseMul = {} )   // marked docs: the second pass counts them
 {
@@ -1293,7 +1293,7 @@ struct DocLiftTally
 // anchor × kDocMentionDecay × the doc's factor, under the per-anchor and total caps. `stopWhenFull` ends the pass at
 // the anchor where the total cap fills (the original loop's contract, and why stoppedAt exists); the marked pass
 // walks every anchor instead, so each marked doc a cap turns away is counted.
-inline void liftDocMentionPass( const Graph& g, std::vector<float>& lensRank, const std::vector<NodeId>& order, std::size_t topN,
+inline void liftDocMentionPass( const Graph& g, std::vector<double>& lensRank, const std::vector<NodeId>& order, std::size_t topN,
                                 std::span<const float> docNoiseMul, bool markedPass, bool stopWhenFull, DocLiftTally& tally )
 {
     EXPECTS( topN <= kDocMentionMaxAnchors && topN <= order.size(), "the consult window is the anchor window" );
@@ -1333,7 +1333,7 @@ inline void liftDocMentionPass( const Graph& g, std::vector<float>& lensRank, co
     ENSURES( tally.liftedDocs <= kDocMentionMaxDocsTotal, "every pass spends one total cap" );
 }
 
-inline bool applyDocMentionBoost( const Graph& g, std::vector<float>& lensRank, DocMentionBoostInfo* outInfo = nullptr,
+inline bool applyDocMentionBoost( const Graph& g, std::vector<double>& lensRank, DocMentionBoostInfo* outInfo = nullptr,
                                   std::span<const float> docNoiseMul = {} )   // filter.h docNoiseSymbolMultipliers; empty = inert
 {
     const std::size_t N = lensRank.size();

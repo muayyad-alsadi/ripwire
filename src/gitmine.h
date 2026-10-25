@@ -3116,7 +3116,7 @@ struct CoBoostInfo
 // `census` is the caller's own gitRecentCommitFileSets census (nullptr ⇒ the caller did not ask for it, and
 // nothing about commits is disclosed) — the mining happens outside this pure function, so the numbers have
 // to arrive with the sets they describe.
-inline bool applyCoChangeBoost( const IngestResult& ing, const std::vector<std::vector<std::uint32_t>>& sets, std::vector<float>& lensRank, CoBoostInfo* outInfo = nullptr,
+inline bool applyCoChangeBoost( const IngestResult& ing, const std::vector<std::vector<std::uint32_t>>& sets, std::vector<double>& lensRank, CoBoostInfo* outInfo = nullptr,
                                 const CommitWindowCensus* census = nullptr )
 {
     // EXPECTS, not DASSERT (rv-s2 review, 2026-09-19): every caller's lensRank is sized from ing.symbols by
@@ -3172,7 +3172,7 @@ inline bool applyCoChangeBoost( const IngestResult& ing, const std::vector<std::
     {
         return false;
     }
-    const float seedFloor = lensRank[ seedIds[ seedSymbolCount - 1 ] ];   // lowest seed score — the unbreakable ceiling
+    const double seedFloor = lensRank[ seedIds[ seedSymbolCount - 1 ] ];   // lowest seed score — the unbreakable ceiling
     ASSUME( seedFloor > 0.0f );
 
     // seed FILES (deduped, seed-rank order; <= kCoBoostSeedCount of them)
@@ -3303,7 +3303,7 @@ inline bool applyCoChangeBoost( const IngestResult& ing, const std::vector<std::
     // frac·deg·seedFloor, clamped STRICTLY below the lowest seed score — so a partner symbol can enter the
     // lower bundle (even from score 0, the multi-file miss case) but can never displace a seed, and a
     // symbol already at/above the seed floor is left untouched (the boost never lowers a score).
-    const float clampCeil = std::nextafterf( seedFloor, 0.0f );
+    const double clampCeil = std::nextafter( seedFloor, 0.0 );
     std::uint32_t boostedSymbolCount = 0, boostedFileCount = 0;
     for( std::uint32_t p = 0; p < partners.size(); ++p )
     {
@@ -3314,12 +3314,12 @@ inline bool applyCoChangeBoost( const IngestResult& ing, const std::vector<std::
         }
         std::sort( ids.begin(), ids.end(), [ &lensRank ]( NodeId a, NodeId b )
                    { return lensRank[a] != lensRank[b] ? lensRank[a] > lensRank[b] : a < b; } );
-        const float boostAdd = kCoBoostFrac * float( partners[p].deg ) * seedFloor;
+        const double boostAdd = double( kCoBoostFrac ) * partners[p].deg * seedFloor;
         bool fileRose = false;
         for( std::size_t i = 0; i < ids.size() && i < kCoBoostMaxSymbolsPerFile; ++i )
         {
             const NodeId id = ids[i];
-            float boosted = lensRank[id] + boostAdd;
+            double boosted = lensRank[id] + boostAdd;
             if( boosted > clampCeil )
             {
                 boosted = clampCeil;

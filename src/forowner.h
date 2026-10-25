@@ -124,7 +124,7 @@ inline bool isOwnerCallableDef( const IngestResult& ing, NodeId id ) noexcept
 // words after the rest (stable). Owner-hop and the body slot read the same set; the RIPWIRE_NO_OWNER_HOP switch is owner-hop's
 // own (it stays in forOwnerHopPlan), so it never reaches the slot.
 inline std::vector<OwnerCandidate> forOwnerCandidates( const IngestResult& ing, const std::vector<std::string>& words,
-                                                       const std::vector<NodeId>& lensSurfaceIds, const std::vector<float>& lensRank )
+                                                       const std::vector<NodeId>& lensSurfaceIds, const std::vector<double>& lensRank )
 {
     std::vector<OwnerCandidate> found;
     if( words.empty() )
@@ -241,7 +241,7 @@ inline bool isParsedMemberOf( const Symbol& m, const Symbol& c ) noexcept
 }
 
 // The head-tier (rank <= kForDocExcerptRankCount) class/struct/interface rows, rank order: the classes that may donate a member.
-inline std::vector<NodeId> headTierClassRows( const IngestResult& ing, const std::vector<NodeId>& lensSurfaceIds, const std::vector<float>& lensRank )
+inline std::vector<NodeId> headTierClassRows( const IngestResult& ing, const std::vector<NodeId>& lensSurfaceIds, const std::vector<double>& lensRank )
 {
     std::vector<NodeId> rows;
     const std::size_t   head = std::min( lensSurfaceIds.size(), std::size_t( kForDocExcerptRankCount ) );
@@ -283,7 +283,7 @@ inline std::vector<NodeId> memberWordDefs( const IngestResult& ing, const std::v
 // THE MEMBER OWNER: the first head-tier class/struct/interface row (rank order) with a member definition the question names
 // (a non-common word); among that class's members the highest lens score, then the lowest id. kNoNode when none has one.
 inline NodeId forMemberOwner( const IngestResult& ing, const std::vector<std::string>& words, const std::vector<NodeId>& lensSurfaceIds,
-                              const std::vector<float>& lensRank )
+                              const std::vector<double>& lensRank )
 {
     const std::vector<NodeId> classRows = headTierClassRows( ing, lensSurfaceIds, lensRank );
     const std::vector<NodeId> named     = classRows.empty() ? std::vector<NodeId>{} : memberWordDefs( ing, words );
@@ -309,7 +309,7 @@ inline NodeId forMemberOwner( const IngestResult& ing, const std::vector<std::st
 
 // The slot's one owner, in the order the header comment states; {kNoNode, None} when the question names none.
 inline ForBodySlotOwner forBodySlotOwner( const IngestResult& ing, const std::vector<std::uint32_t>& outOff, const std::vector<NodeId>& outTargets,
-                                          std::string_view task, const std::vector<NodeId>& lensSurfaceIds, const std::vector<float>& lensRank )
+                                          std::string_view task, const std::vector<NodeId>& lensSurfaceIds, const std::vector<double>& lensRank )
 {
     const std::vector<std::string> words = ownerQuestionWords( task );
     if( words.empty() )
@@ -381,7 +381,7 @@ struct BodySlotInputs
     const std::vector<std::uint32_t>& outOff;
     const std::vector<NodeId>&        outTargets;
     const std::vector<std::uint8_t>&  outNameOnly;
-    const std::vector<float>&         lensRank;      // orders a cut <calls> listing, as every --for body's
+    const std::vector<double>&        lensRank;      // orders a cut <calls> listing, as every --for body's
     std::string_view                  rootArg;
     RedactCounts*                     redact;
     const notes::NoteIndex*           notes;

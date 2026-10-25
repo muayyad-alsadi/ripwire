@@ -2072,7 +2072,7 @@ struct McpForAssembly
 struct McpForAssemblyInputs   // forTaskText's locals the assembly reads, by reference; all outlive the call
 {
     const IngestResult&                        ing;
-    const std::vector<float>&                  lensRank;
+    const std::vector<double>&                  lensRank;
     int                                        forTopN;
     const std::vector<std::uint32_t>&          fanIn;
     const std::vector<char>&                   impure;
@@ -2139,7 +2139,7 @@ inline McpForAssembly assembleMcpFor( const McpForAssemblyInputs& in, std::strin
                                       std::string composeStr, std::vector<std::vector<NodeId>> legoScoped, std::size_t legoPreCapCount )
 {
     const IngestResult&                       ing                = in.ing;
-    const std::vector<float>&                 lensRank           = in.lensRank;
+    const std::vector<double>&                 lensRank           = in.lensRank;
     const int                                 forTopN            = in.forTopN;
     const std::vector<std::uint32_t>&         fanIn              = in.fanIn;
     const std::vector<char>&                  impure             = in.impure;
@@ -2466,10 +2466,17 @@ inline std::optional<std::string> forTaskText( const std::string& root, const st
     // L-W: the term evidence behind the subtoken pass rides out for coverage= and the file page — the CLI
     // twin's computeLensRanking makes the same two calls (one exhaustive subtoken pass on the identifier route).
     LexTermEvidence    mcpEvidence;
-    std::vector<float> lensRank  = ( rc.which == LexMode::NameExact )
-                                       ? lexicalScoresNameExactRanked( ing, task, &tierMul )
-                                       : lexicalScoresTiered( ing, ix.g.outOff, ix.g.outTargets, task, /*pruneTopK=*/0, &ifaceExact, &tierMul,
-                                                              0, 0, {}, &mcpEvidence );
+    std::vector<double> lensRank;
+    if( rc.which == LexMode::NameExact )
+    {
+        const std::vector<float> exact = lexicalScoresNameExactRanked( ing, task, &tierMul );
+        lensRank.assign( exact.begin(), exact.end() );
+    }
+    else
+    {
+        lensRank = lexicalScoresTiered( ing, ix.g.outOff, ix.g.outTargets, task, /*pruneTopK=*/0, &ifaceExact, &tierMul,
+                                        0, 0, {}, &mcpEvidence );
+    }
     if( rc.which == LexMode::NameExact )
     {
         lexicalScoresTiered( ing, ix.g.outOff, ix.g.outTargets, task, /*pruneTopK=*/0, nullptr, &tierMul, 0, 0, {}, &mcpEvidence );
@@ -4741,9 +4748,16 @@ inline std::string packTaskText( const std::string& root, const std::string& tas
     const queryshape::Verdict shape   = queryshape::classify( task );
     const std::vector<float>  tierMul = rankTierSymbolMultipliersShaped( ing, !noRoute && shape.fires() );
     const std::vector<float>  docNoiseMul = !noRoute ? docNoiseSymbolMultipliers( ing, task ) : std::vector<float>{};   // the CLI twin's lift order
-    lr.rank      = ( rc.which == LexMode::NameExact ) ? lexicalScoresNameExactRanked( ing, task, &tierMul )
-                                                       : lexicalScoresTiered( ing, g.outOff, g.outTargets, task, 0, &ifaceExact, &tierMul,
-                                                                              0, 0, {}, &lr.evidence );
+    if( rc.which == LexMode::NameExact )
+    {
+        const std::vector<float> exact = lexicalScoresNameExactRanked( ing, task, &tierMul );
+        lr.rank.assign( exact.begin(), exact.end() );
+    }
+    else
+    {
+        lr.rank = lexicalScoresTiered( ing, g.outOff, g.outTargets, task, 0, &ifaceExact, &tierMul,
+                                       0, 0, {}, &lr.evidence );
+    }
     // §L10b + verify-wave2 F6: same trim as the other route= construction sites — neither bracket.
     lr.routeNote = routeNoteOf( rc, shape, noRoute );   // row 6: the route CODE, ONE producer (filter.h)
 

@@ -330,6 +330,16 @@ TEST_CASE( "match: any and all follow the exact-or-stem rule" )
     CHECK( !rw::stemGuardMatches( c.table, c.exact.data(), 2, 0 ) );
 }
 
+TEST_CASE( "tier: a long query keeps content order in double" )
+{
+    const double peak = 1.0e5;
+    const int    words = 1024;
+    const double low  = rw::stemGuardTier( peak, words, 10.0 );
+    const double high = rw::stemGuardTier( peak, words, 10.0 + 1.0e-3 );
+    CHECK( high > low );
+    CHECK( float( high ) == float( low ) );
+}
+
 TEST_CASE( "tier: an unmatched symbol stays at zero" )
 {
     CHECK( rw::stemGuardTier( 100.0, 0, 0.0 ) == doctest::Approx( 0.0 ) );

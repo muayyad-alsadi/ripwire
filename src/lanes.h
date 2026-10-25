@@ -414,8 +414,8 @@ struct LanesInputs
     std::vector<std::string>               laneTasks;         // brief mode: one line per lane
     bool                                   autoCarve = false;
     std::uint32_t                          requested = 0;
-    const std::vector<float>*              carveRank = nullptr;                 // auto-carve
-    const std::vector<std::vector<float>>* laneRanks = nullptr;                 // brief mode
+    const std::vector<double>*             carveRank = nullptr;                 // auto-carve
+    const std::vector<std::vector<double>>* laneRanks = nullptr;                // brief mode
     const std::vector<std::uint32_t>*      churn     = nullptr;                 // per file, --hotspots' own axis
     const std::vector<std::uint8_t>*       tested    = nullptr;                 // per symbol
     const notes::NoteIndex*                notes     = nullptr;
@@ -1055,7 +1055,7 @@ inline void briefLanes( const LanesInputs& in, const ClaimLens& lens, PlanLanesR
     const Graph&        g   = *in.g;
     for( std::size_t i = 0; i < in.laneTasks.size(); ++i )
     {
-        const std::vector<float>& rank = (*in.laneRanks)[i];
+        const std::vector<double>& rank = (*in.laneRanks)[i];
         std::vector<NodeId>       order( ing.symbols.size() );
         for( NodeId n = 0; n < NodeId( order.size() ); ++n )
         {

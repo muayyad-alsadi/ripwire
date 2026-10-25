@@ -47,7 +47,7 @@ inline std::pair<std::size_t, std::size_t> filePoolParams()
 }
 
 // Apply pooling to lensRank (size == ing.symbols.size()). Returns true if anything moved.
-inline bool applyFilePooling( const IngestResult& ing, std::vector<float>& lensRank, std::size_t topK, std::size_t blendPct )
+inline bool applyFilePooling( const IngestResult& ing, std::vector<double>& lensRank, std::size_t topK, std::size_t blendPct )
 {
     if( topK == 0 || lensRank.size() != ing.symbols.size() || lensRank.empty() )
     {
@@ -57,7 +57,7 @@ inline bool applyFilePooling( const IngestResult& ing, std::vector<float>& lensR
     // Gather each file's POSITIVE symbol scores. A non-positive symbol contributes nothing and a file
     // with no positive symbol is never placed — the one part of siblift not implicated in its failure.
     const std::size_t                 F = ing.files.size();
-    std::vector<std::vector<float>>   perFile( F );
+    std::vector<std::vector<double>>  perFile( F );
     for( std::size_t i = 0; i < lensRank.size(); ++i )
     {
         if( lensRank[i] > 0.f )
@@ -66,17 +66,17 @@ inline bool applyFilePooling( const IngestResult& ing, std::vector<float>& lensR
         }
     }
 
-    std::vector<float> fileBest( F, 0.f );   // today's max-pool
-    std::vector<float> pooled  ( F, 0.f );   // sum of the top-K
-    float              bestMax = 0.f, bestPooled = 0.f;
+    std::vector<double> fileBest( F, 0.0 );   // today's max-pool
+    std::vector<double> pooled  ( F, 0.0 );   // sum of the top-K
+    double              bestMax = 0.0, bestPooled = 0.0;
     for( std::uint32_t f = 0; f < F; ++f )
     {
-        std::vector<float>& v = perFile[f];
+        std::vector<double>& v = perFile[f];
         if( v.empty() )
         {
             continue;
         }
-        std::sort( v.begin(), v.end(), std::greater<float>() );
+        std::sort( v.begin(), v.end(), std::greater<double>() );
         fileBest[f] = v[0];
         const std::size_t take = std::min( topK, v.size() );
         // pooled is the outer F-sized vector; v is perFile[f], one element's own allocation — never the
@@ -96,11 +96,11 @@ inline bool applyFilePooling( const IngestResult& ing, std::vector<float>& lensR
 
     // Put the pooled score on the SAME SCALE as the max-pool before blending, so blend is a pure
     // interpolation between two comparable rankings and not a silent change of units.
-    const float scale = bestMax / bestPooled;
-    const float blend = float( blendPct ) / 100.0f;
+    const double scale = bestMax / bestPooled;
+    const double blend = double( blendPct ) / 100.0;
 
     std::vector<std::uint32_t> order;
-    std::vector<float>         effective( F, 0.f );
+    std::vector<double>        effective( F, 0.0 );
     for( std::uint32_t f = 0; f < F; ++f )
     {
         if( fileBest[f] <= 0.f )
@@ -134,7 +134,7 @@ inline bool applyFilePooling( const IngestResult& ing, std::vector<float>& lensR
     // Slot ladder, mention-boost vocabulary: the i-th pooled file's top symbols land at
     // top*(1 - step*(i+1)), strictly below #1. max() keeps anything already scored higher in place, so
     // this is monotone non-decreasing on every symbol it touches.
-    const float topScore = fileBest[ baseOrder[0] ];
+    const double topScore = fileBest[ baseOrder[0] ];
     bool        moved    = false;
     const std::size_t nLift = std::min( kPoolLiftFiles, order.size() );
     for( std::size_t i = 0; i < nLift; ++i )
@@ -143,12 +143,12 @@ inline bool applyFilePooling( const IngestResult& ing, std::vector<float>& lensR
         {
             continue;   // pooling did not promote this file — leave it exactly where the baseline put it
         }
-        const float slot = topScore * ( 1.0f - kMentionTopGapStep * float( i + 1 ) );
+        const double slot = topScore * ( 1.0 - kMentionTopGapStep * double( i + 1 ) );
         if( slot <= 0.f )
         {
             break;
         }
-        std::vector<std::pair<float, NodeId>> symbols;
+        std::vector<std::pair<double, NodeId>> symbols;
         for( std::size_t k = 0; k < ing.symbols.size(); ++k )
         {
             if( ing.symbols[k].fileId == order[i] && lensRank[k] > 0.f )

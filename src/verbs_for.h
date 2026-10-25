@@ -39,7 +39,7 @@ namespace
 // inlined branch-and-format blocks measurably worsened computeLensRanking's own complexity
 // (--quality-delta, 2026-09-10) for no reason the format text itself needs — the branch belongs beside the
 // mechanism it discloses, not beside the other three unrelated boosts it happens to run next to.
-inline std::string applySiblingLiftNoted( const rw::IngestResult& ing, std::vector<float>& lensRank, std::size_t sibSeed, std::size_t sibPer )
+inline std::string applySiblingLiftNoted( const rw::IngestResult& ing, std::vector<double>& lensRank, std::size_t sibSeed, std::size_t sibPer )
 {
     rw::SibliftLiftInfo liftInfo;
     if( !rw::applySiblingLift( ing, lensRank, sibSeed, sibPer, &liftInfo ) )
@@ -53,7 +53,7 @@ inline std::string applySiblingLiftNoted( const rw::IngestResult& ing, std::vect
     return nb;
 }
 
-inline std::string applyStructuralExpansionNoted( const rw::IngestResult& ing, std::vector<float>& lensRank, std::size_t expSeeds, std::size_t expPer )
+inline std::string applyStructuralExpansionNoted( const rw::IngestResult& ing, std::vector<double>& lensRank, std::size_t expSeeds, std::size_t expPer )
 {
     rw::ExpandLiftInfo liftInfo;
     if( !rw::applyStructuralExpansion( ing, lensRank, expSeeds, expPer, &liftInfo ) )
@@ -141,12 +141,19 @@ rw::LensRanking computeLensRanking( const MainDispatch& d, std::string_view task
     const std::vector<float> docNoiseMul = routeOn ? docNoiseSymbolMultipliers( ing, task ) : std::vector<float>{};
 
     LensRanking out;
-    std::vector<float>& lensRank = out.rank;
+    std::vector<double>& lensRank = out.rank;
     if( routeOn )
     {
-        lensRank      = ( rc.which == LexMode::NameExact ) ? lexicalScoresNameExactRanked( ing, task, &tierMul )
-                                                           : lexicalScoresTiered( ing, g.outOff, g.outTargets, task, forPruneK, ifaceExactPtr, &tierMul,
-                                                                                  0, 0, {}, &out.evidence );   // L-W: the term evidence rides out
+        if( rc.which == LexMode::NameExact )
+        {
+            const std::vector<float> exact = lexicalScoresNameExactRanked( ing, task, &tierMul );
+            lensRank.assign( exact.begin(), exact.end() );
+        }
+        else
+        {
+            lensRank = lexicalScoresTiered( ing, g.outOff, g.outTargets, task, forPruneK, ifaceExactPtr, &tierMul,
+                                            0, 0, {}, &out.evidence );   // L-W: the term evidence rides out
+        }
         if( rc.which == LexMode::NameExact )
         {
             // L-W: the name-exact ranker scores WHOLE names, so the subtoken evidence coverage= and the file page
@@ -332,7 +339,7 @@ rw::LensRanking computeLensRanking( const MainDispatch& d, std::string_view task
 // 40-row cap can hide the true cliff; false for --query, whose ceiling already covers the full top-k).
 // One function (not inlined at each call site) so the two PRE-EXISTING dispatch functions this composes
 // into (runForLens/runDefaultMap) each gain a single call instead of the whole cut-and-print sequence.
-inline void emitCandidates( std::FILE* out, const rw::IngestResult& ing, const std::vector<float>& rank,
+inline void emitCandidates( std::FILE* out, const rw::IngestResult& ing, const std::vector<double>& rank,
                              int topK, bool adaptive, bool scanFullDistribution,
                              rw::CandidateProvenance prov,   // §A4f: route/anchored/weak — the caller owns which ranker ran
                              rw::RedactCounts* redact,       // §B0/W3-N1: REQUIRED — <sig> is emitted text
@@ -395,7 +402,7 @@ inline void emitCandidates( std::FILE* out, const rw::IngestResult& ing, const s
 struct ForLensJsonInputs
 {
     const rw::IngestResult&          ing;
-    const std::vector<float>&         rank;
+    const std::vector<double>&        rank;
     int                               topN;
     const std::vector<std::uint32_t>* fanIn;
     const std::vector<char>*          impure;
@@ -1961,7 +1968,7 @@ std::size_t forDetailFirstBodyFloor( const rw::IngestResult& ing, const std::vec
 // already one of the largest functions in this file, and this candidate-head computation is a complete,
 // independently-testable step.
 std::vector<rw::NodeId> computeAutoBodyCandidateIds( const rw::IngestResult& ing, const std::vector<rw::NodeId>& lensSurfaceIds,
-                                                     const std::vector<float>& lensRank, const std::vector<rw::RouteAnchorDef>& anchorDefs )
+                                                     const std::vector<double>& lensRank, const std::vector<rw::RouteAnchorDef>& anchorDefs )
 {
     std::vector<rw::NodeId> candidateSurface;
     if( !anchorDefs.empty() )
@@ -1992,7 +1999,7 @@ std::vector<rw::NodeId> computeAutoBodyCandidateIds( const rw::IngestResult& ing
 }
 
 ForAutoBodiesResult buildForAutoBodies( const rw::Config& cfg, const rw::IngestResult& ing, const rw::Graph& g,
-                                        const std::vector<rw::NodeId>& lensSurfaceIds, const std::vector<float>& lensRank,
+                                        const std::vector<rw::NodeId>& lensSurfaceIds, const std::vector<double>& lensRank,
                                         std::size_t committedBytes, std::size_t bundleBudget, rw::RedactCounts* redactPtr,
                                         const std::vector<rw::RouteAnchorDef>& anchorDefs, bool viaLegendInHead, bool splitLegendInHead = false )
 {
@@ -2195,7 +2202,7 @@ inline std::size_t enrichmentLegendBytesEmitted( const ForEnrichmentPlan& plan, 
 
 // The compact route's <hops> rows: the positive-score head of the ranked surface, capped at kPackTaskBodyCandidates. One
 // spelling, read by buildForCompactHops and by the header's via="name" question (FE-B), so the two cannot disagree.
-inline std::vector<rw::NodeId> forCompactHopIds( const std::vector<rw::NodeId>& lensSurfaceIds, const std::vector<float>& lensRank )
+inline std::vector<rw::NodeId> forCompactHopIds( const std::vector<rw::NodeId>& lensSurfaceIds, const std::vector<double>& lensRank )
 {
     std::vector<rw::NodeId> hopIds;
     for( rw::NodeId sid : lensSurfaceIds )
@@ -2257,7 +2264,7 @@ struct ForSectionPromises
 };
 
 inline ForOwnerPlan forOwnerHopPlan( const rw::IngestResult& ing, const rw::Graph& g, std::string_view task,
-                                     const std::vector<rw::NodeId>& lensSurfaceIds, const std::vector<float>& lensRank,
+                                     const std::vector<rw::NodeId>& lensSurfaceIds, const std::vector<double>& lensRank,
                                      const std::vector<rw::NodeId>& hopIds )
 {
     ForOwnerPlan plan;
@@ -2345,7 +2352,7 @@ inline rw::HopOwners forHopOwners( const rw::Config& cfg, const rw::IngestResult
 
 // --detail=N's bodies: the top min(N, forTopN) symbols by (score desc, id asc) — the order the sigs use. One spelling, read
 // by the --detail section and by the header's via="name" question (FE-B).
-inline std::vector<rw::NodeId> forDetailIds( const rw::IngestResult& ing, const std::vector<float>& lensRank, int detail, int forTopN )
+inline std::vector<rw::NodeId> forDetailIds( const rw::IngestResult& ing, const std::vector<double>& lensRank, int detail, int forTopN )
 {
     const std::size_t        S = ing.symbols.size();
     std::vector<rw::NodeId> ids( S );
@@ -2422,7 +2429,7 @@ void forHopsCutDisclose( rw::ChargedSection& section, std::string_view cutNext )
 }
 
 ForAutoBodiesResult buildForCompactHops( const rw::Config& cfg, const rw::IngestResult& ing, const rw::Graph& g,
-                                          const std::vector<rw::NodeId>& lensSurfaceIds, const std::vector<float>& lensRank,
+                                          const std::vector<rw::NodeId>& lensSurfaceIds, const std::vector<double>& lensRank,
                                           std::size_t committedBytes, std::size_t bundleBudget, rw::RedactCounts* redactPtr,
                                           const ForSectionPromises& promised )
 {
@@ -2514,7 +2521,7 @@ ForAutoBodiesResult buildForCompactHops( const rw::Config& cfg, const rw::Ingest
 // sections and "</ctx>", plus the post-ladder splices — and this function adds the plan's own root-attribute
 // reserve, because the compact spelling is the longer of the two and the caller should not have to know that.
 ForAutoBodiesResult buildForEnrichment( const rw::Config& cfg, const rw::IngestResult& ing, const rw::Graph& g,
-                                        const std::vector<rw::NodeId>& lensSurfaceIds, const std::vector<float>& lensRank,
+                                        const std::vector<rw::NodeId>& lensSurfaceIds, const std::vector<double>& lensRank,
                                         const ForEnrichmentPlan& plan, const std::vector<rw::RouteAnchorDef>& anchorDefs,
                                         rw::RedactCounts* redactPtr, std::size_t committedBytes, std::size_t bundleBudget,
                                         const ForSectionPromises& promised )   // FE-B via="name" in the head + the owner plan
@@ -2538,7 +2545,7 @@ ForAutoBodiesResult buildForEnrichment( const rw::Config& cfg, const rw::IngestR
 // mf1-nx (forcallerhop.h): the ONE function whose callers ride — `nameExactBodies` is the posture runForLensPass knows (the auto
 // <bodies> bundle on the name-exact route); this adds the regime (XML, no explicit --token-budget, the A/B switch) and the target rule.
 inline std::vector<rw::NodeId> forCallerHopIds( const rw::Config& cfg, const rw::IngestResult& ing, const rw::Graph& g, const std::vector<rw::NodeId>& lensSurfaceIds,
-                                                const std::vector<float>& lensRank, const std::vector<rw::RouteAnchorDef>& anchorDefs, bool nameExactBodies )
+                                                const std::vector<double>& lensRank, const std::vector<rw::RouteAnchorDef>& anchorDefs, bool nameExactBodies )
 {
     if( !nameExactBodies || cfg.json || cfg.tokenBudget > 0 || !rw::forCallerHopOn() )
     {
@@ -2587,7 +2594,7 @@ inline std::string renderForHdrRowsXml( const rw::IngestResult& ing, const std::
 
 // the CLI half of the shared page (forpage.h owns the doc): write it to stdout. One implementation,
 // three dialects — the CLI bundle verbs and the MCP twins all build the SAME document.
-inline int emitForCandidatePage( const rw::IngestResult& ing, const std::vector<float>& lensRank, const rw::AdaptiveCut& forCut,
+inline int emitForCandidatePage( const rw::IngestResult& ing, const std::vector<double>& lensRank, const rw::AdaptiveCut& forCut,
                                  const rw::ForCandidatePageReq& req )
 {
     // the CLI half of the shared page (forpage.h owns the doc): write it to stdout. One
@@ -2673,7 +2680,7 @@ std::optional<int> runForLensPass( const MainDispatch& d, rw::LensRanking lr, co
         // computeLensRanking (shared with runPackTask so the ranking is defined once). Compose order with
         // --anchor: ROUTE picks the base lens rank, then ANCHOR expands it; mention/co-change run after.
         // (the ranking itself — computeLensRanking — runs ONCE, in runForLens: every payment-mode render shares it)
-        std::vector<float> lensRank  = std::move( lr.rank );
+        std::vector<double> lensRank  = std::move( lr.rank );
         const bool         forBodyCeiling   = cfg.maxTokens > 0 && cfg.detail > 0;   // the kShapingVerbs carve-out, read once (e= and the docs reorder share it via serialize.h explicitCeilingTighterThanDefault)
         // code above docs (filter.h): the routed path on a question that does not ask about docs — the shown set's REORDER
         const bool         forDocsAfterCode = !cfg.noRoute && !taskAsksAboutDocs( cfg.forTask ) && !std::getenv( "RIPWIRE_NO_DOCS_AFTER_CODE" )

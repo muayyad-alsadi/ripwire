@@ -53,7 +53,8 @@ inline float recallAtK( const std::vector<std::uint32_t>& ranked, const std::vec
 }
 
 // rank file ids by score descending, id-tiebroken (deterministic)
-inline std::vector<std::uint32_t> rankFiles( const std::vector<float>& score )
+template<class Score>
+inline std::vector<std::uint32_t> rankFiles( const std::vector<Score>& score )
 {
     std::vector<std::uint32_t> order( score.size() );
     for( std::uint32_t f = 0; f < score.size(); ++f )
@@ -422,15 +423,16 @@ inline int runEval( const std::string& root, const IngestResult& ing, const Grap
 inline constexpr float kScoreTieAbsEps = 1e-6f;
 inline constexpr float kScoreTieRelEps = 1e-5f;
 
-inline double rankOfSymbol( const std::vector<float>& score, NodeId gold )
+template<class Score>
+inline double rankOfSymbol( const std::vector<Score>& score, NodeId gold )
 {
-    const float g = score[ gold ];
+    const Score g = score[ gold ];
     std::size_t better = 0;                                   // symbols scoring strictly ahead of gold
     std::size_t tied   = 0;                                   // symbols scoring exactly gold, gold itself excluded
     for( NodeId i = 0; i < score.size(); ++i )
     {
-        const float eps  = std::max( kScoreTieAbsEps, kScoreTieRelEps * std::max( std::fabs( score[i] ), std::fabs( g ) ) );
-        const float diff = score[i] - g;
+        const double eps  = std::max( double( kScoreTieAbsEps ), double( kScoreTieRelEps ) * std::max( std::fabs( double( score[i] ) ), std::fabs( double( g ) ) ) );
+        const double diff = double( score[i] ) - double( g );
         if( diff > eps )
         {
             ++better;
@@ -731,17 +733,21 @@ inline int runEvalRetrieval( const IngestResult& ing, const Graph& g )
     RetrievalAcc subN, subP, exN, exP, anN, anP, rtN, rtP;
     std::size_t  routedNameExactPicks = 0;                    // how often routing chose name-exact on a NAME query
 
-    const auto scoreAndRank = [ & ]( const std::vector<float>& sc, NodeId gold ) { return rankOfSymbol( sc, gold ); };
+    const auto scoreAndRank = [ & ]( const auto& sc, NodeId gold ) { return rankOfSymbol( sc, gold ); };
 
     for( const RetrievalGoldItem& sm : sample )
     {
         // (a) NAME query
         {
-            const std::vector<float> sub = lexicalScores( ing, g.outOff, g.outTargets, sm.name );
-            const std::vector<float> ex  = lexicalScoresNameExact( ing, sm.name );
-            const std::vector<float> an  = anchoredLexicalRank( g, sub );
-            const RouteChoice        rc  = chooseForRanker( ing, sm.name );
-            const std::vector<float>& rt = ( rc.which == LexMode::NameExact ) ? ex : sub;
+            const std::vector<double> sub = lexicalScores( ing, g.outOff, g.outTargets, sm.name );
+            const std::vector<float>  ex  = lexicalScoresNameExact( ing, sm.name );
+            const std::vector<double> an  = anchoredLexicalRank( g, sub );
+            const RouteChoice         rc  = chooseForRanker( ing, sm.name );
+            std::vector<double>       rt  = sub;
+            if( rc.which == LexMode::NameExact )
+            {
+                rt.assign( ex.begin(), ex.end() );
+            }
             if( rc.which == LexMode::NameExact )
             {
                 ++routedNameExactPicks;
@@ -753,11 +759,15 @@ inline int runEvalRetrieval( const IngestResult& ing, const Graph& g )
         }
         // (b) DOC-PHRASE query
         {
-            const std::vector<float> sub = lexicalScores( ing, g.outOff, g.outTargets, sm.phrase );
-            const std::vector<float> ex  = lexicalScoresNameExact( ing, sm.phrase );
-            const std::vector<float> an  = anchoredLexicalRank( g, sub );
-            const RouteChoice        rc  = chooseForRanker( ing, sm.phrase );
-            const std::vector<float>& rt = ( rc.which == LexMode::NameExact ) ? ex : sub;
+            const std::vector<double> sub = lexicalScores( ing, g.outOff, g.outTargets, sm.phrase );
+            const std::vector<float>  ex  = lexicalScoresNameExact( ing, sm.phrase );
+            const std::vector<double> an  = anchoredLexicalRank( g, sub );
+            const RouteChoice         rc  = chooseForRanker( ing, sm.phrase );
+            std::vector<double>       rt  = sub;
+            if( rc.which == LexMode::NameExact )
+            {
+                rt.assign( ex.begin(), ex.end() );
+            }
             addRetrieval( subP, scoreAndRank( sub, sm.gold ) );
             addRetrieval( exP,  scoreAndRank( ex,  sm.gold ) );
             addRetrieval( anP,  scoreAndRank( an,  sm.gold ) );
@@ -1015,9 +1025,10 @@ inline bool parseMinedLine( const std::string& line, MinedPair& out )
 // max-pool a per-SYMBOL score vector to per-FILE (a file's score = its best symbol's score; files with
 // no symbols keep the 0 baseline — every lexical score here is BM25-non-negative). Mirrors
 // anchoredFileScore's pooling above and bench/locbench's file-level convention (§5.3).
-inline std::vector<float> maxPoolToFiles( const IngestResult& ing, const std::vector<float>& symScore, std::uint32_t F )
+template<class Score>
+inline std::vector<Score> maxPoolToFiles( const IngestResult& ing, const std::vector<Score>& symScore, std::uint32_t F )
 {
-    std::vector<float> fileScore( F, 0.f );
+    std::vector<Score> fileScore( F, Score{} );
     for( const Symbol& s : ing.symbols )
     {
         if( s.id < symScore.size() && symScore[s.id] > fileScore[s.fileId] )
@@ -1134,15 +1145,23 @@ inline int runEvalMined( const std::string& root, const IngestResult& ing, const
 
         // `for` == `query`: both are today's exact --for/--query default (routed lexical, no --anchor) —
         // see the block comment above. Computed once, scored into both rows (never a drifted second impl).
-        const RouteChoice        rc   = chooseForRanker( ing, p.query );
-        const std::vector<float> base = ( rc.which == LexMode::NameExact ) ? lexicalScoresNameExact( ing, p.query )
-                                                                            : lexicalScores( ing, g.outOff, g.outTargets, p.query );
-        const std::vector<float> forFileScore = maxPoolToFiles( ing, base, F );
+        const RouteChoice rc = chooseForRanker( ing, p.query );
+        std::vector<double>   base;
+        if( rc.which == LexMode::NameExact )
+        {
+            const std::vector<float> exact = lexicalScoresNameExact( ing, p.query );
+            base.assign( exact.begin(), exact.end() );
+        }
+        else
+        {
+            base = lexicalScores( ing, g.outOff, g.outTargets, p.query );
+        }
+        const std::vector<double> forFileScore = maxPoolToFiles( ing, base, F );
         addMinedRow( forA[idx],   rankFiles( forFileScore ), gold, goldTotal );
         addMinedRow( queryA[idx], rankFiles( forFileScore ), gold, goldTotal );
 
-        const std::vector<float> anchorSym       = anchoredLexicalRank( g, base );
-        const std::vector<float> anchorFileScore = maxPoolToFiles( ing, anchorSym, F );
+        const std::vector<double> anchorSym       = anchoredLexicalRank( g, base );
+        const std::vector<double> anchorFileScore = maxPoolToFiles( ing, anchorSym, F );
         addMinedRow( anchorA[idx], rankFiles( anchorFileScore ), gold, goldTotal );
 
         ++nPairs[idx];

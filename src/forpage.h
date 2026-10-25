@@ -102,7 +102,8 @@ inline int forCoveragePct( const LexTermEvidence& ev, NodeId sym ) noexcept
 
 // the r=1 symbol of a ranking: the highest score, lowest id on a tie (the (score desc, id asc) order every
 // --for consumer selects with); kNoNode when nothing scored above zero — there is no top-ranked symbol then
-inline NodeId topLensId( const std::vector<float>& rank ) noexcept
+template<class Score>
+inline NodeId topLensId( const std::vector<Score>& rank ) noexcept
 {
     NodeId best = kNoNode;
     for( std::size_t i = 0; i < rank.size(); ++i )
@@ -195,7 +196,7 @@ struct ForCandidatePageReq
     int                    pageOffset  = 0;
 };
 
-inline std::string forCandidatePageDoc( const rw::IngestResult& ing, const std::vector<float>& lensRank,
+inline std::string forCandidatePageDoc( const rw::IngestResult& ing, const std::vector<double>& lensRank,
                                         const rw::AdaptiveCut& forCut, const ForCandidatePageReq& p )
 {
     using namespace rw;   // the file's idiom: function-scoped
@@ -471,7 +472,7 @@ struct ForFileRow
 {
     std::uint32_t fileId      = 0;
     std::uint32_t symbolCount = 0;      // positive-score symbols in the file (n=)
-    float         best        = 0.f;    // the file's best symbol's lens score (the tie-break)
+    double        best        = 0.0;    // the file's best symbol's lens score (the tie-break)
     double        share       = 0.0;    // U_f in [0,1] — the score
     NodeId        top[ kForPageSymNameCount ] = { kNoNode, kNoNode, kNoNode };
 };
@@ -509,7 +510,8 @@ inline bool forFileRowBefore( const IngestResult& ing, const ForFileRow& a, cons
 }
 
 // The page's ranking, from the finished lens ranking (every lift applied) and the term evidence.
-inline ForFilePage computeForFilePage( const IngestResult& ing, const std::vector<float>& rank, const LexTermEvidence& ev )
+template<class Score>
+inline ForFilePage computeForFilePage( const IngestResult& ing, const std::vector<Score>& rank, const LexTermEvidence& ev )
 {
     ForFilePage       out;
     const std::size_t S = std::min( ing.symbols.size(), rank.size() );
@@ -730,7 +732,8 @@ inline std::string forPageSymOfFile( const IngestResult& ing, const ForFilePage&
 //    a rank row's file has a positive-score symbol, so its row exists) — reused from computeForFilePage, never recomputed.
 //    The same (score desc, id asc) walk opens the page row at the file's best symbol, so the first name is the symbol that
 //    ranked this row; the rest are the file's next symbols by lens rank. A pointer into the file, not the answer.
-inline void fileTailRankRows( FileTail& out, std::vector<char>& listed, const IngestResult& ing, const std::vector<float>& rank,
+template<class Score>
+inline void fileTailRankRows( FileTail& out, std::vector<char>& listed, const IngestResult& ing, const std::vector<Score>& rank,
                               const ForFilePage& page, const std::vector<NodeId>& headIds, std::string_view rootArg )
 {
     const std::size_t                F         = ing.files.size();
@@ -783,7 +786,8 @@ inline void fileTailPageRows( FileTail& out, std::vector<char>& listed, const In
     }
 }
 
-inline FileTail computeFileTail( const IngestResult& ing, const std::vector<float>& rank, const LexTermEvidence& ev,
+template<class Score>
+inline FileTail computeFileTail( const IngestResult& ing, const std::vector<Score>& rank, const LexTermEvidence& ev,
                                  const std::vector<NodeId>& headIds, std::string_view rootArg, std::string_view task )
 {
     FileTail          out;
@@ -801,7 +805,8 @@ inline FileTail computeFileTail( const IngestResult& ing, const std::vector<floa
 // `pastTarget` rows past its cut — the lowest-ranked shown rows in the lens's (score desc, id asc) order, which is the order
 // the ladder's past-target count is taken in. The tail's rank rows exclude THESE files under a soft target: the rows past
 // the cut may be narrowed after the tail is funded, and a narrowed row's file must still land somewhere (H2H lane 2).
-inline std::vector<NodeId> rowsAtTargetIds( std::vector<NodeId> shown, const std::vector<float>& rank, std::size_t pastTarget )
+template<class Score>
+inline std::vector<NodeId> rowsAtTargetIds( std::vector<NodeId> shown, const std::vector<Score>& rank, std::size_t pastTarget )
 {
     if( pastTarget == 0 || pastTarget > shown.size() )
     {

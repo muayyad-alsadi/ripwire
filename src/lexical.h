@@ -471,7 +471,7 @@ inline const std::string* lexicalScanText( const IngestResult& ing, std::size_t 
     return &scratch;
 }
 
-inline std::vector<float> lexicalScoresTiered( const IngestResult& ing, const std::vector<std::uint32_t>& outOff,
+inline std::vector<double> lexicalScoresTiered( const IngestResult& ing, const std::vector<std::uint32_t>& outOff,
                                                const std::vector<NodeId>& outTargets, std::string_view query,
                                                std::size_t pruneTopK, const std::vector<char>* alwaysExact,
                                                const std::vector<float>* symbolScoreMul, int pathFieldDefaultW = 0,
@@ -493,7 +493,7 @@ inline std::vector<float> lexicalScoresTiered( const IngestResult& ing, const st
             *evidenceOut             = LexTermEvidence{};
             evidenceOut->symbolCount = S;
         }
-        return std::vector<float>( S, 0.f );
+        return std::vector<double>( S, 0.0 );
     }
 
     // dedupe to the unique terms whose statistics we need — a duplicated query word must not double-count
@@ -1204,11 +1204,12 @@ inline std::vector<float> lexicalScoresTiered( const IngestResult& ing, const st
         }
     }
 
-    std::vector<float> score( S, 0.f );
+    std::vector<double> score( S, 0.0 );
 
     // ── the guarded score (stemguard.h). One scoring lambda serves both branches, so the pruned and the exhaustive
     //    results are byte-identical by construction. final = k * (P + 1) + S, where k counts kept query words the
-    //    symbol holds as typed and P bounds every S, so more typed words always rank first.
+    //    symbol holds as typed and P bounds every S, so more typed words always rank first. The vector stays
+    //    double: at kMaxUniqueQueryTerms the tier term is large enough that a float's ULP erases S inside a tier.
     std::vector<int> occCount( uniqueCount, 0 );
     for( std::size_t qi = 0; qi < qToks.size(); ++qi )
     {
@@ -1324,7 +1325,7 @@ inline std::vector<float> lexicalScoresTiered( const IngestResult& ing, const st
                 continue; // provably cannot enter the top-K → skip
             }
             const double sc = scoreSymbol( i );
-            score[i]        = float( sc );
+            score[i]        = sc;
             if( heap.size() < pruneTopK )
             {
                 heap.push_back( sc );
@@ -1348,7 +1349,7 @@ inline std::vector<float> lexicalScoresTiered( const IngestResult& ing, const st
 
     for( std::size_t i = 0; i < S; ++i )
     {
-        score[i] = float( scoreSymbol( i ) );
+        score[i] = scoreSymbol( i );
     }
     finishEvidence();
     return score;
@@ -1356,7 +1357,7 @@ inline std::vector<float> lexicalScoresTiered( const IngestResult& ing, const st
 
 // the un-tiered contract every pre-§P4 caller keeps (evals, exemplar, --recall): same arity as always,
 // byte-identical scores (a null multiplier is the identity in both scoring branches above).
-inline std::vector<float> lexicalScores( const IngestResult& ing, const std::vector<std::uint32_t>& outOff,
+inline std::vector<double> lexicalScores( const IngestResult& ing, const std::vector<std::uint32_t>& outOff,
                                          const std::vector<NodeId>& outTargets, std::string_view query,
                                          std::size_t pruneTopK = 0, const std::vector<char>* alwaysExact = nullptr,
                                          int pathFieldDefaultW = 0, std::string_view pathRootPrefix = {} )
@@ -2263,22 +2264,22 @@ struct AdaptiveCut
 // (a sharp query's head is small, so kept clamps down to few; a broad query saturates → no knee → ceiling).
 // --query does NOT set this: its ceiling is already the full map top-k, so its scan already covers the
 // meaningful range and its measured behavior (sharp cuts, broad keeps all) must stay byte-identical.
-inline AdaptiveCut adaptiveCut( const std::vector<float>& scores, std::size_t floorK, std::size_t ceilingK,
+inline AdaptiveCut adaptiveCut( const std::vector<double>& scores, std::size_t floorK, std::size_t ceilingK,
                                 bool scanFullDistribution = false )
 {
     AdaptiveCut cut;
 
     // positive scores only, sorted DESC (id tie-break is irrelevant to the gap analysis — pure magnitudes).
-    std::vector<float> pos;
+    std::vector<double> pos;
     pos.reserve( scores.size() );
-    for( float s : scores )
+    for( double s : scores )
     {
-        if( s > 0.f )
+        if( s > 0.0 )
         {
             pos.push_back( s );
         }
     }
-    sortutil::radixSortNonNegativeFloatsDesc( pos );
+    std::sort( pos.begin(), pos.end(), std::greater<double>() );
 
     // clamp the working ceiling to what actually has positive score (a query with few hits can't keep more).
     const std::size_t avail = pos.size();

@@ -68,7 +68,7 @@ inline bool forBodyFoldOn()
 // The candidates: the first kForBodyFoldRows rows of the ranked head (rank order; the first `headRows` entries of the surface
 // with a positive score, the rows <sigs> prints) that are not `bodied` (the body slot's owner, already served whole) and have a
 // span to slice (a module scope is bodyless by construction).
-inline std::vector<NodeId> forBodyFoldCandidates( const IngestResult& ing, const std::vector<NodeId>& lensSurfaceIds, const std::vector<float>& lensRank,
+inline std::vector<NodeId> forBodyFoldCandidates( const IngestResult& ing, const std::vector<NodeId>& lensSurfaceIds, const std::vector<double>& lensRank,
                                                   std::size_t headRows, NodeId bodied )
 {
     std::vector<NodeId> out;
@@ -113,7 +113,7 @@ struct BodyFoldInputs
     const IngestResult&     ing;
     std::string_view        task;         // the question: the member slice's words
     NodeId                  bodied;       // the body slot's owner (kNoNode: none) — already served, never repeated
-    const std::vector<float>& lensRank;   // orders nothing here (no <calls>); threaded so a body renders as every --for body
+    const std::vector<double>& lensRank;   // orders nothing here (no <calls>); threaded so a body renders as every --for body
     std::string_view        rootArg;
     RedactCounts*           redact;       // no NoteIndex: a ranked row's note rides on its <d> row once, never again in the fold
     bool                    compress;     // --compress (the CLI only)

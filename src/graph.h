@@ -11033,36 +11033,39 @@ namespace anchorcfg
 // blend two score vectors in SCORE space after max-normalizing each to [0,1]:
 // out[i] = (1−λ)·a[i]/max(a) + λ·b[i]/max(b). Degrades to `a` when either vector is degenerate
 // (empty / non-positive max) — never a zero vector. Single-threaded, index order ⇒ deterministic.
-inline std::vector<float> blendMaxNorm( const std::vector<float>& a, const std::vector<float>& b, float lambda )
+template<class ScoreA, class ScoreB>
+inline std::vector<ScoreA> blendMaxNorm( const std::vector<ScoreA>& a, const std::vector<ScoreB>& b, float lambda )
 {
     if( a.size() != b.size() || a.empty() )
     {
         return a;
     }
-    float amax = 0.f, bmax = 0.f;
-    for( float v : a )
+    ScoreA amax = 0;
+    ScoreB bmax = 0;
+    for( ScoreA v : a )
     {
         if( v > amax )
         {
             amax = v;
         }
     }
-    for( float v : b )
+    for( ScoreB v : b )
     {
         if( v > bmax )
         {
             bmax = v;
         }
     }
-    if( !( amax > 0.f ) || !( bmax > 0.f ) )
+    if( !( amax > 0 ) || !( bmax > 0 ) )
     {
         return a;
     }
-    std::vector<float> out( a.size() );
+    std::vector<ScoreA> out( a.size() );
     // out is fresh, placed after the size/empty and degenerate-max early returns above, before the loop.
     ASSUME_NO_ALIAS_BUF( out, a );
     ASSUME_NO_ALIAS_BUF( out, b );
-    const float ia = ( 1.0f - lambda ) / amax, ib = lambda / bmax;
+    const ScoreA ia = ScoreA( 1.0f - lambda ) / amax;
+    const ScoreA ib = ScoreA( lambda ) / ScoreA( bmax );
     for( std::size_t i = 0; i < a.size(); ++i )
     {
         out[i] = a[i] * ia + b[i] * ib;
@@ -11092,7 +11095,8 @@ inline std::vector<float> blendMaxNorm( const std::vector<float>& a, const std::
 // numeric id only to give the comparator a strict total order over true full-duplicate qualified names,
 // which are indistinguishable by identity anyway — makes anchor selection, and everything downstream of
 // it, invariant to an irrelevant file's position in the crawl.
-inline std::vector<float> anchoredLexicalRank( const Graph& g, const std::vector<float>& lex )
+template<class Score>
+inline std::vector<Score> anchoredLexicalRank( const Graph& g, const std::vector<Score>& lex )
 {
     const std::size_t N = lex.size();
     if( N == 0 || g.wOutDeg.size() != N )
@@ -13493,7 +13497,8 @@ inline std::vector<char> provenCallerReach( const Graph& g, std::span<const Node
 // The ORDER: hop depth first (1 = calls a seed directly), then the order the listing always had within a depth
 // (PageRank descending, node id ascending). Ranked BEFORE the page window cuts (docs/METHODOLOGY.md §9.1), so a
 // cut drops the deepest rows first and a capped answer is complete through every depth its rows pass.
-inline void orderByDepthThenRank( std::vector<NodeId>& show, const std::vector<std::uint32_t>& depth, const std::vector<float>& rank )
+template<class Score>
+inline void orderByDepthThenRank( std::vector<NodeId>& show, const std::vector<std::uint32_t>& depth, const std::vector<Score>& rank )
 {
     EXPECTS( depth.size() == rank.size(), "depth and rank are both indexed by node id" );
     std::sort( show.begin(), show.end(), [ & ]( NodeId a, NodeId b )

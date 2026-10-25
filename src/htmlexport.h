@@ -2471,7 +2471,8 @@ inline void writeDocumentShell( std::FILE* out, const std::string& pageTitle )
 //   Modules: one Louvain community (graph.h communities()) per selected-node group that has ≥2
 //   members, sorted (member count desc, id asc) — mirrors --communities' "a lone symbol is not a
 //   module" rule so the wiki and the text verb agree.
-inline void writeHtml( std::FILE* out, const IngestResult& ing, const std::vector<float>& rank, const Graph& g, int topK, const HtmlColorExtras& color,
+template<class Score>
+inline void writeHtml( std::FILE* out, const IngestResult& ing, const std::vector<Score>& rank, const Graph& g, int topK, const HtmlColorExtras& color,
                        std::string_view rootArg = {},   // R-R: the root FILES[] entries are relative to
                        bool codeFirstRows = false )     // the default map's code-first node pick (serialize.h codeFirstKeep)
 {
